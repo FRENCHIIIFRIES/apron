@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const COMMANDS = new Set(['toggle', 'next', 'prev']);
+const COMMANDS = new Set(['toggle', 'next', 'prev', 'volup', 'voldown', 'mute']);
 const SOURCE = path.join(__dirname, 'media', 'IslandMedia.cs');
 const BINARY = path.join(__dirname, '..', 'bin', 'island-media.exe');
 
@@ -71,7 +71,8 @@ function start(onUpdate) {
   launch();
   return {
     command(cmd) {
-      if (COMMANDS.has(cmd) && proc && proc.stdin.writable) proc.stdin.write(`${cmd}\n`);
+      const ok = COMMANDS.has(cmd) || /^vol (100|[1-9]?\d)$/.test(cmd);
+      if (ok && proc && proc.stdin.writable) proc.stdin.write(`${cmd}\n`);
     },
     stop() {
       stopped = true;

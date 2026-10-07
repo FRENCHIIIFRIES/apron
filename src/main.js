@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage, globalShortcut } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { loadConfig, saveConfig, CONFIG_PATH, HEX } = require('./config');
@@ -201,6 +201,10 @@ app.whenReady().then(() => {
   buildTray();
   applyLoginItem();
   trackHover();
+  // Ctrl+Alt+Space holds the island open (and closes it again).
+  globalShortcut.register('Control+Alt+Space', () => {
+    if (win && !win.isDestroyed()) win.webContents.send('island:toggle');
+  });
   sources.media = media.start((v) => update('media', v));
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v));
   startSources();
@@ -210,6 +214,7 @@ app.whenReady().then(() => {
   screen.on('display-removed', place);
 });
 
+app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('before-quit', () => {
   for (const s of Object.values(sources)) s.stop();
 });

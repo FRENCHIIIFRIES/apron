@@ -1,9 +1,10 @@
 // Media bridge for the island, built with the .NET Framework csc that ships with Windows.
-// stdin:  one command per line: toggle | next | prev
-// stdout: the current media session as one JSON line, whenever it changes.
+// stdin:  one command per line: toggle | next | prev | volup | voldown | mute | vol <0-100>
+// stdout: the current media session + system volume as one JSON line, whenever it changes.
 using System;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using Windows.Foundation;
@@ -71,7 +72,9 @@ static class IslandMedia
             {
                 var s = manager.GetCurrentSession();
                 if (s == null) continue;
-                switch (line.Trim())
+                var cmd = line.Trim();
+                if (Volume.Handle(cmd)) { wake.Set(); continue; }
+                switch (cmd)
                 {
                     case "toggle": Await(s.TryTogglePlayPauseAsync()); break;
                     case "next": Await(s.TrySkipNextAsync()); break;
@@ -91,7 +94,7 @@ static class IslandMedia
     static string Status()
     {
         var s = manager.GetCurrentSession();
-        if (s == null) return "{\"active\":false}";
+        if (s == null) return "{\"active\":false" + Volume.Json() + "}";
         var props = Await(s.TryGetMediaPropertiesAsync());
         var info = s.GetPlaybackInfo();
         var tl = s.GetTimelineProperties();
@@ -119,6 +122,7 @@ static class IslandMedia
         sb.Append(",\"duration\":").Append(tl.EndTime.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
         sb.Append(",\"updatedAt\":").Append(tl.LastUpdatedTime.ToUnixTimeMilliseconds());
         Prop(sb, "art", art);
+        sb.Append(Volume.Json());
         return sb.Append('}').ToString();
     }
 
@@ -166,5 +170,109 @@ static class IslandMedia
             }
         }
         sb.Append('"');
+    }
+}
+
+// System master volume through Core Audio (IAudioEndpointVolume), so the island can
+// show and set the level without popping up the Windows volume flyout.
+static class Volume
+{
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+    class MMDeviceEnumerator { }
+
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator
+    {
+        int NotUsed_EnumAudioEndpoints();
+        [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
+    }
+
+    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice
+    {
+        [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
+    }
+
+    [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IAudioEndpointVolume
+    {
+        int RegisterControlChangeNotify(IntPtr notify);
+        int UnregisterControlChangeNotify(IntPtr notify);
+        int GetChannelCount(out uint count);
+        int SetMasterVolumeLevel(float levelDb, ref Guid context);
+        int SetMasterVolumeLevelScalar(float level, ref Guid context);
+        int GetMasterVolumeLevel(out float levelDb);
+        int GetMasterVolumeLevelScalar(out float level);
+        int SetChannelVolumeLevel(uint channel, float levelDb, ref Guid context);
+        int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
+        int GetChannelVolumeLevel(uint channel, out float levelDb);
+        int GetChannelVolumeLevelScalar(uint channel, out float level);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context);
+        int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+    }
+
+    static Guid context = Guid.Empty;
+
+    // Fetched each time so switching speakers/headphones just works.
+    static IAudioEndpointVolume Endpoint()
+    {
+        var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+        IMMDevice device;
+        if (enumerator.GetDefaultAudioEndpoint(0 /* render */, 1 /* multimedia */, out device) != 0 || device == null) return null;
+        var iid = typeof(IAudioEndpointVolume).GUID;
+        object o;
+        if (device.Activate(ref iid, 23 /* CLSCTX_ALL */, IntPtr.Zero, out o) != 0) return null;
+        return o as IAudioEndpointVolume;
+    }
+
+    public static bool Handle(string cmd)
+    {
+        float delta;
+        if (cmd == "volup") delta = 0.04f;
+        else if (cmd == "voldown") delta = -0.04f;
+        else if (cmd == "mute")
+        {
+            var ep = Endpoint();
+            if (ep == null) return true;
+            bool muted;
+            ep.GetMute(out muted);
+            ep.SetMute(!muted, ref context);
+            return true;
+        }
+        else if (cmd.StartsWith("vol "))
+        {
+            int pct;
+            if (!int.TryParse(cmd.Substring(4), out pct)) return true;
+            var ep = Endpoint();
+            if (ep != null) ep.SetMasterVolumeLevelScalar(Math.Max(0, Math.Min(100, pct)) / 100f, ref context);
+            return true;
+        }
+        else return false;
+
+        var e = Endpoint();
+        if (e == null) return true;
+        float level;
+        e.GetMasterVolumeLevelScalar(out level);
+        e.SetMasterVolumeLevelScalar(Math.Max(0f, Math.Min(1f, level + delta)), ref context);
+        if (delta > 0) e.SetMute(false, ref context);
+        return true;
+    }
+
+    public static string Json()
+    {
+        try
+        {
+            var e = Endpoint();
+            if (e == null) return "";
+            float level;
+            bool muted;
+            e.GetMasterVolumeLevelScalar(out level);
+            e.GetMute(out muted);
+            return ",\"volume\":" + (int)Math.Round(level * 100) + ",\"muted\":" + (muted ? "true" : "false");
+        }
+        catch
+        {
+            return "";
+        }
     }
 }

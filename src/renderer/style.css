@@ -19,6 +19,7 @@
 :root {
   --accent: #d71921;
   --accent-glow: color-mix(in srgb, var(--accent) 65%, transparent);
+  --art: var(--accent);
   --bg: #000;
   --fg: #fff;
   --muted: #8a8a8a;
@@ -208,7 +209,7 @@ button {
 .bars { display: flex; gap: 3px; align-items: flex-end; height: 16px; }
 .bars i {
   width: 4px;
-  background: repeating-linear-gradient(to top, var(--accent) 0 3px, transparent 3px 4px);
+  background: repeating-linear-gradient(to top, var(--art) 0 3px, transparent 3px 4px);
   animation: bar 0.9s steps(4, jump-none) infinite;
 }
 .bars i:nth-child(2) { animation-delay: -0.3s; }
@@ -228,7 +229,7 @@ button {
 }
 
 .tabs button {
-  padding: 4px 10px;
+  padding: 4px 9px;
   border-radius: 999px;
   color: var(--muted);
   font-size: 10.5px;
@@ -257,7 +258,7 @@ button {
   margin-left: auto;
   font-family: var(--dotted);
   font-weight: 800;
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
 }
 
@@ -420,7 +421,7 @@ button {
 .track i {
   display: block;
   height: 100%;
-  background: radial-gradient(circle, var(--fg) 1.5px, transparent 1.8px) 0 0 / 6px 4px;
+  background: radial-gradient(circle, var(--art) 1.5px, transparent 1.8px) 0 0 / 6px 4px;
 }
 
 .controls { display: flex; justify-content: center; gap: 28px; }
@@ -440,3 +441,68 @@ button {
 .controls .play svg { fill: #000; width: 22px; height: 22px; }
 .controls .play:hover { background: var(--accent); }
 .controls .play:hover svg { fill: #fff; }
+
+/* ---------- added features ---------- */
+
+.glyph svg { width: 15px; height: 15px; fill: var(--accent); display: block; }
+
+/* track-change peek: the notch widens and shows a two-line now playing */
+#island.peek { width: 340px; height: 58px; }
+#island.peek .compact { height: 58px; gap: 12px; padding-left: 10px; }
+#island.peek .lead,
+#island.peek .lead img { width: 40px; height: 40px; }
+.two { display: flex; flex-direction: column; min-width: 0; }
+.two b,
+.two small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.two b { font-family: var(--dotted); font-weight: 800; font-size: 17px; text-transform: none; letter-spacing: 0; line-height: 1.1; }
+.two small { color: var(--muted); font-size: 10px; }
+#island.peek .bars { height: 22px; }
+
+/* album art spins slowly like a record while playing */
+.media-art.spinning { animation: spin 14s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* volume row */
+.volume { display: flex; align-items: center; gap: 8px; padding: 0 2px; }
+.vol-icon { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; }
+.vol-icon:hover { background: var(--faint); }
+.vol-icon svg { width: 16px; height: 16px; fill: var(--muted); }
+.vol-track { cursor: pointer; height: 8px; background-size: 6px 8px; }
+.vol-track i { background-size: 6px 8px; background-image: radial-gradient(circle, var(--fg) 1.5px, transparent 1.8px); }
+.vol-pct { width: 34px; text-align: right; font-family: var(--dotted); font-weight: 800; font-size: 14px; }
+.media { gap: 10px; }
+
+/* calendar: the class happening now fills up as it goes */
+.row { position: relative; overflow: hidden; }
+.row > * { position: relative; }
+.row-progress {
+  position: absolute !important;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+}
+
+/* focus timer */
+.timer { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+.timer-big { font-family: var(--dotted); font-weight: 800; font-size: 64px; line-height: 1; letter-spacing: 0.02em; }
+.timer-big.idle { color: var(--faint); }
+.timer-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
+.timer-label::before { content: "● "; color: var(--accent); }
+.timer-track { width: 70%; flex: none; }
+.timer-track i { background-image: radial-gradient(circle, var(--accent) 1.5px, transparent 1.8px); }
+.timer-presets { display: flex; gap: 6px; }
+
+/* battery glyph */
+.batt {
+  position: relative;
+  width: 20px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1.5px var(--fg);
+  padding: 2px;
+  display: flex;
+}
+.batt::after { content: ""; position: absolute; right: -3px; top: 3px; width: 2px; height: 4px; border-radius: 0 1px 1px 0; background: var(--fg); }
+.batt i { display: block; height: 100%; border-radius: 1px; background: var(--fg); }
+.batt.charging i { background: #3ddc84; }
+.batt.low i { background: var(--accent); }

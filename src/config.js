@@ -2,7 +2,18 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const CONFIG_PATH = path.join(ROOT, 'config.json');
+// The installed app keeps its settings in %APPDATA%\Island so reinstalling doesn't wipe them.
+function configDir() {
+  try {
+    const { app } = require('electron');
+    if (app && app.isPackaged) return app.getPath('userData');
+  } catch {
+    // not running inside Electron (tests)
+  }
+  return ROOT;
+}
+
+const CONFIG_PATH = path.join(configDir(), 'config.json');
 const EXAMPLE_PATH = path.join(ROOT, 'config.example.json');
 
 const DEFAULTS = {
