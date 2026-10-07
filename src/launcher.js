@@ -75,6 +75,13 @@ const looksLikeUrl = (s) => /^https?:\/\//i.test(s) || /^[\w-]+(\.[\w-]+)+(\/\S*
 function search(index, input) {
   const raw = String(input || '').trim();
   if (!raw) return [];
+  // A pasted ManageBac / Classroom calendar link: offer to add it as a homework feed.
+  if (/^webcal:\/\//i.test(raw) || (/^https:\/\//i.test(raw) && /(\.ics\b|managebac|\/ical\/|calendar)/i.test(raw))) {
+    return [
+      { kind: 'addfeed', title: 'Add as homework feed', hint: 'Due dates', url: raw },
+      { kind: 'url', title: raw, hint: 'Open website', url: raw.replace(/^webcal:/i, 'https:') },
+    ];
+  }
   for (const p of PREFIXES) {
     if (p.re.test(raw)) {
       const rest = raw.replace(p.re, '').trim();

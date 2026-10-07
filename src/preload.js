@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('island', {
   openSettings: () => ipcRenderer.send('island:open-settings'),
   launcherSearch: (input) => ipcRenderer.invoke('island:launcher-search', String(input)),
   launcherRun: (item) => ipcRenderer.send('island:launcher-run', item),
+  openLauncher: () => ipcRenderer.send('island:open-launcher'),
   askCancel: () => ipcRenderer.send('island:ask-cancel'),
   share: () => ipcRenderer.invoke('island:share'),
   claudeDecide: (id, allow) => ipcRenderer.send('island:claude-decide', String(id), Boolean(allow)),

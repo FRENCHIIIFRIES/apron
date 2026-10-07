@@ -300,7 +300,7 @@ function schoolSection() {
     h(
       'div',
       { class: 'item stack' },
-      label('Homework due dates', 'ManageBac: Calendar → Subscribe (copy the link). Classroom: its Google Calendar → Settings → Secret address.'),
+      label('Homework due dates', 'ManageBac: Calendar → Subscribe → copy the link (don\'t add it to Google) and paste it here. Classroom: its Google Calendar → Settings → Secret address.'),
       (c.homeworkUrls || []).length
         ? h('div', { class: 'chips' }, ...c.homeworkUrls.map((u) => h('span', { class: 'chip' }, mask(u), h('button', { class: 'x', title: 'Remove', onclick: () => set({ homeworkUrls: c.homeworkUrls.filter((x) => x !== u) }) }, '×'))))
         : null,
@@ -339,7 +339,7 @@ function notesAiSection() {
 
   return section(
     'Launcher, notes & AI',
-    h('div', { class: 'item' }, label('Quick launcher', 'Ctrl+Alt+Space, then type an app or site. "n …" saves a note, "t …" adds a to-do, "? …" asks Claude.')),
+    h('div', { class: 'item' }, label('Quick launcher', `${snap.launcherShortcut || 'Ctrl+Alt+Space'} (or ⌕ in the notch), then type an app or site. "n …" saves a note, "t …" adds a to-do, "? …" asks Claude.`)),
     h('div', { class: 'item stack' }, label('Notes go to', snap.notesTarget), h('div', { class: 'row-line' }, pathInput, h('button', { class: 'btn', onclick: savePath }, 'Save'))),
     h(
       'div',

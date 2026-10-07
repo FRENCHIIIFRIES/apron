@@ -259,6 +259,15 @@ function checkBedtime() {
 
 // ---------- launcher ----------
 
+let launcherShortcut = null;
+function openLauncherOn(displayId) {
+  const n = notches.get(displayId) || notches.values().next().value;
+  if (!n || n.win.isDestroyed()) return;
+  n.win.setFocusable(true);
+  n.win.focus();
+  n.win.webContents.send('island:toggle');
+}
+
 let launcherIndex = null;
 let launcherBuiltAt = 0;
 function getIndex() {
@@ -295,6 +304,15 @@ async function runLauncher(item) {
       } catch (err) {
         emit({ type: 'info', text: `Couldn't save note: ${err.message}`, trail: '!' });
       }
+      break;
+    }
+    case 'addfeed': {
+      const url = String(item.url || '').replace(/^webcal:\/\//i, 'https://');
+      const clean = sanitize({ homeworkUrls: [...(config.homeworkUrls || []), url] });
+      if (clean.homeworkUrls && clean.homeworkUrls.includes(url)) {
+        setConfig(clean);
+        emit({ type: 'info', text: 'Homework feed added', trail: '✎' });
+      } else emit({ type: 'info', text: "That link didn't look like a calendar feed", trail: '!' });
       break;
     }
     case 'todo':
@@ -398,6 +416,7 @@ function settingsSnapshot() {
   return {
     config: safeConfig,
     hasAiKey: Boolean(aiKeyEnc),
+    launcherShortcut,
     notesTarget: notes.target(config).label,
     version: app.getVersion(),
     configPath: CONFIG_PATH,
@@ -524,6 +543,10 @@ ipcMain.on('island:timer', (_e, op, arg) => {
 ipcMain.on('island:open-settings', () => openSettings());
 ipcMain.handle('island:launcher-search', (_e, input) => launcher.search(getIndex(), String(input || '').slice(0, 300)));
 ipcMain.on('island:launcher-run', (_e, item) => runLauncher(item));
+// The ⌕ button in the notch: same as the shortcut, but for the notch that was clicked.
+ipcMain.on('island:open-launcher', (e) => {
+  for (const [id, n] of notches) if (!n.win.isDestroyed() && n.win.webContents === e.sender) openLauncherOn(id);
+});
 ipcMain.on('island:ask-cancel', () => sources.ask && sources.ask.cancel());
 ipcMain.handle('island:share', async () => {
   const m = state.media;
@@ -585,14 +608,13 @@ app.whenReady().then(() => {
   // Ctrl+Alt+Space holds the notch on the screen you're on open (and closes it again).
   if (process.env.APRON_SETTINGS) openSettings();
   // Ctrl+Alt+Space opens the launcher on the screen you're on (and closes it again).
-  globalShortcut.register('Control+Alt+Space', () => {
-    const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-    const n = notches.get(d.id) || notches.values().next().value;
-    if (!n || n.win.isDestroyed()) return;
-    n.win.setFocusable(true);
-    n.win.focus();
-    n.win.webContents.send('island:toggle');
-  });
+  // If another app already owns it, fall back to the next free combo.
+  for (const combo of ['Control+Alt+Space', 'Control+Shift+Space', 'Alt+Shift+Space']) {
+    if (globalShortcut.register(combo, () => openLauncherOn(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id))) {
+      launcherShortcut = combo.replace('Control', 'Ctrl');
+      break;
+    }
+  }
 
   const lyricSource = lyrics.create((v) => update('lyrics', v));
   sources.media = media.start(

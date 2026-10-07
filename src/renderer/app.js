@@ -974,7 +974,7 @@ const launchResults = $('#launch-results');
 let launchItems = [];
 let launchSel = 0;
 let searchSeq = 0;
-const KIND_GLYPH = { open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
+const KIND_GLYPH = { addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
 
 function renderLaunchResults() {
   const a = state.ask;
@@ -1181,6 +1181,7 @@ customInput.addEventListener('input', () => applyAccent(customInput.value));
 customInput.addEventListener('change', () => pickAccent(customInput.value));
 $('#swatch-toggle').addEventListener('click', () => swatchesEl.classList.toggle('open'));
 $('#gear').addEventListener('click', () => window.island.openSettings());
+$('#search-btn').addEventListener('click', () => window.island.openLauncher());
 
 // Album art: Nothing-style black & white, or its real colours.
 const artToggle = $('#art-toggle');
