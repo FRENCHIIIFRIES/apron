@@ -55,7 +55,8 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Apron"
+      "shortcutName": "Apron",
+      "artifactName": "Apron-Setup-${version}.${ext}"
     },
     "publish": [
       {
