@@ -46,6 +46,18 @@ const DEFAULTS = {
   screenTime: true,
   privacyDots: true,
   aiKeyEnc: '', // Anthropic API key, encrypted with Windows' DPAPI (safeStorage)
+  classMode: { enabled: false, start: '08:00', end: '15:30', days: [1, 2, 3, 4, 5], lockdown: true, quiet: true },
+  dailySummary: { enabled: true, time: '21:30' },
+  voice: false, // "Hey Apron" voice commands (offline)
+  aiProvider: 'gemini', // 'gemini' or 'claude' for Ask, translation and the planner
+  geminiKeyEnc: '', // Google AI Studio key, encrypted like aiKeyEnc
+  geminiModel: '', // empty = ai.js default
+  claudeModel: '',
+  translateCopies: false,
+  spotifyClientId: '',
+  spotifyRefreshEnc: '',
+  flashcardsFolder: '', // empty = your Obsidian vault
+  homeWidgets: ['music', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system'],
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;

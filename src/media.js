@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const COMMANDS = new Set(['toggle', 'next', 'prev', 'volup', 'voldown', 'mute', 'watch on', 'watch off']);
+const COMMANDS = new Set(['toggle', 'next', 'prev', 'shuffle', 'repeat', 'volup', 'voldown', 'mute', 'watch on', 'watch off']);
 const COMMAND_RE = /^(vol (100|[1-9]?\d)|(closetab|minimize) \d+)$/;
 const SOURCE = path.join(__dirname, 'media', 'IslandMedia.cs');
 const BINARY = path.join(__dirname, '..', 'bin', 'apron-media.exe');

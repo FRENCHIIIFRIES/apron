@@ -2,6 +2,7 @@
 // Anything not listed here (or that fails validation) is ignored.
 
 const HEX = /^#[0-9a-f]{6}$/i;
+const WIDGETS = ['music', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system', 'stats', 'plan', 'clip'];
 const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 const int = (min, max) => (v) => (Number.isFinite(Number(v)) ? Math.max(min, Math.min(max, Math.round(Number(v)))) : undefined);
 const oneOf = (...opts) => (v) => (opts.includes(v) ? v : undefined);
@@ -53,6 +54,30 @@ const SCHEMA = {
   bedtime: (v) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : undefined),
   screenTime: bool,
   privacyDots: bool,
+  classMode: (v) => {
+    if (!v || typeof v !== 'object') return undefined;
+    const t = (x, d) => (typeof x === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(x) ? x : d);
+    return {
+      enabled: v.enabled === true,
+      start: t(v.start, '08:00'),
+      end: t(v.end, '15:30'),
+      days: Array.isArray(v.days) ? [...new Set(v.days.map(Number).filter((d) => d >= 0 && d <= 6))] : [1, 2, 3, 4, 5],
+      lockdown: v.lockdown !== false,
+      quiet: v.quiet !== false,
+    };
+  },
+  dailySummary: (v) => {
+    if (!v || typeof v !== 'object') return undefined;
+    return { enabled: v.enabled !== false, time: typeof v.time === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v.time) ? v.time : '21:30' };
+  },
+  voice: bool,
+  aiProvider: oneOf('gemini', 'claude'),
+  geminiModel: (v) => (typeof v === 'string' && /^[\w.-]{0,80}$/.test(v.trim()) ? v.trim() : undefined),
+  claudeModel: (v) => (typeof v === 'string' && /^[\w.-]{0,80}$/.test(v.trim()) ? v.trim() : undefined),
+  translateCopies: bool,
+  spotifyClientId: (v) => (typeof v === 'string' && /^[0-9a-f]{0,64}$/i.test(v.trim()) ? v.trim() : undefined),
+  flashcardsFolder: text(400),
+  homeWidgets: (v) => (Array.isArray(v) ? [...new Set(v.filter((w) => typeof w === 'string' && WIDGETS.includes(w)))] : undefined),
   lockdown: (v) => {
     if (!v || typeof v !== 'object') return undefined;
     const site = list(50, 60);
@@ -77,4 +102,4 @@ function sanitize(patch) {
   return out;
 }
 
-module.exports = { sanitize, SCHEMA };
+module.exports = { sanitize, SCHEMA, WIDGETS };

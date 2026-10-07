@@ -82,6 +82,24 @@ static class IslandMedia
                     case "toggle": Await(s.TryTogglePlayPauseAsync()); break;
                     case "next": Await(s.TrySkipNextAsync()); break;
                     case "prev": Await(s.TrySkipPreviousAsync()); break;
+                    case "shuffle":
+                    {
+                        var on = s.GetPlaybackInfo().IsShuffleActive;
+                        Await(s.TryChangeShuffleActiveAsync(!(on.HasValue && on.Value)));
+                        break;
+                    }
+                    case "repeat":
+                    {
+                        // off -> all -> one -> off
+                        var mode = s.GetPlaybackInfo().AutoRepeatMode;
+                        var next = !mode.HasValue || mode.Value == Windows.Media.MediaPlaybackAutoRepeatMode.None
+                            ? Windows.Media.MediaPlaybackAutoRepeatMode.List
+                            : mode.Value == Windows.Media.MediaPlaybackAutoRepeatMode.List
+                                ? Windows.Media.MediaPlaybackAutoRepeatMode.Track
+                                : Windows.Media.MediaPlaybackAutoRepeatMode.None;
+                        Await(s.TryChangeAutoRepeatModeAsync(next));
+                        break;
+                    }
                 }
                 Thread.Sleep(250);
                 wake.Set();
@@ -188,6 +206,10 @@ static class IslandMedia
         sb.Append(",\"playing\":").Append(info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing ? "true" : "false");
         sb.Append(",\"canNext\":").Append(info.Controls.IsNextEnabled ? "true" : "false");
         sb.Append(",\"canPrev\":").Append(info.Controls.IsPreviousEnabled ? "true" : "false");
+        sb.Append(",\"canShuffle\":").Append(info.Controls.IsShuffleEnabled ? "true" : "false");
+        sb.Append(",\"canRepeat\":").Append(info.Controls.IsRepeatEnabled ? "true" : "false");
+        sb.Append(",\"shuffle\":").Append(info.IsShuffleActive.HasValue && info.IsShuffleActive.Value ? "true" : "false");
+        Prop(sb, "repeat", info.AutoRepeatMode.HasValue ? info.AutoRepeatMode.Value.ToString().ToLowerInvariant() : "none");
         sb.Append(",\"position\":").Append(tl.Position.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
         sb.Append(",\"duration\":").Append(tl.EndTime.TotalSeconds.ToString("0.###", CultureInfo.InvariantCulture));
         sb.Append(",\"updatedAt\":").Append(tl.LastUpdatedTime.ToUnixTimeMilliseconds());

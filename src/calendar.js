@@ -61,7 +61,7 @@ function start(config, onUpdate, opts = {}) {
       urls.map(async (url, i) => {
         const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
         if (!res.ok) throw new Error(`calendar ${i + 1}: HTTP ${res.status}`);
-        return parseEvents(await res.text(), from, to, i);
+        return parseEvents((await res.text()).replace(/^\uFEFF/, ''), from, to, i);
       }),
     );
     if (stopped) return;

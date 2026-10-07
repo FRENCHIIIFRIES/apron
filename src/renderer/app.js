@@ -12,7 +12,7 @@ const state = {
   media: null,
   claude: [],
   github: null,
-  tab: 'media',
+  tab: 'home',
   expanded: false,
   held: false, // opened with Ctrl+Alt+Space: stays open until pressed again
   peekUntil: 0, // track-change preview
@@ -29,6 +29,15 @@ const state = {
   privacy: { mic: [], cam: [] },
   ask: null,
   launching: false,
+  sys: null,
+  battery: null, // { level, charging, dischargingTime }
+  spotify: null,
+  plan: null,
+  planning: null,
+  flashcards: { count: 0 },
+  classMode: false,
+  card: null, // { q, a, flipped }
+  cardsMode: false,
 };
 const isPrimary = new URLSearchParams(location.search).get('primary') !== '0';
 
@@ -72,6 +81,16 @@ const ICONS = {
   prev: 'M19 6.2v11.6a.8.8 0 0 1-1.2.7L9.5 12.7a.8.8 0 0 1 0-1.4l8.3-5.8a.8.8 0 0 1 1.2.7zM5 5.5h2.5v13H5z',
   cal: 'M7 2v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zm-2 7h14v10H5z',
   speaker: 'M4 9v6h4l5 4V5L8 9zm12.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z',
+  home: 'M12 3 2 11.5h3V21h5.5v-6h3v6H19v-9.5h3z',
+  music: 'M19 3v12.6A3.5 3.5 0 1 1 17 12.5V7.3l-8 1.8v8.5A3.5 3.5 0 1 1 7 14.5V5.5z',
+  claude: 'M12 2l1.8 6.2L20 6l-4.2 4.8L22 12l-6.2 1.2L20 18l-6.2-2.2L12 22l-1.8-6.2L4 18l4.2-4.8L2 12l6.2-1.2L4 6l6.2 2.2z',
+  check: 'M9.5 16.2 5.3 12l-1.4 1.4 5.6 5.6L21 7.5l-1.4-1.4z',
+  clip: 'M9 2h6a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2V3a1 1 0 0 1 1-1zm1 2v2h4V4zM8 10v2h8v-2zm0 4v2h6v-2z',
+  sys: 'M9 2v2H7a3 3 0 0 0-3 3v2H2v2h2v2H2v2h2v2a3 3 0 0 0 3 3h2v2h2v-2h2v2h2v-2h2a3 3 0 0 0 3-3v-2h2v-2h-2v-2h2V9h-2V7a3 3 0 0 0-3-3h-2V2h-2v2h-2V2zm0 6h6v8H9z',
+  heart: 'M12 21s-7.5-4.6-9.5-9.2C1 8.2 3.2 4.5 7 4.5c2 0 3.6 1.1 5 2.8 1.4-1.7 3-2.8 5-2.8 3.8 0 6 3.7 4.5 7.3C19.5 16.4 12 21 12 21z',
+  shuffle: 'M17 3l4 4-4 4V8h-2.6l-7.3 9H3v-2h3.1l7.3-9H17zm0 10l4 4-4 4v-3h-3.9l-2.1-2.6 1.3-1.6 1.8 2.2H17zM3 7h4.1l2.1 2.6-1.3 1.6L6.1 9H3z',
+  repeat: 'M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z',
+  list: 'M3 5h13v2H3zm0 6h13v2H3zm0 6h9v2H3zm15-6v6.3A2.5 2.5 0 1 0 20 20v-7h2v-2z',
   muted: 'M4 9v6h4l5 4V5L8 9zm16.6 0-1.4-1.4-2.6 2.6-2.6-2.6L12.6 9l2.6 2.6-2.6 2.6 1.4 1.4 2.6-2.6 2.6 2.6 1.4-1.4-2.6-2.6z',
   timer: 'M9 1h6v2H9zm3 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm1 8.4V8h-2v6.6l4.2 2.5 1-1.7z',
 };
@@ -463,7 +482,16 @@ function renderMedia() {
         fmtDuration(m.duration),
       ),
     (!state.settings || state.settings.lyrics !== false) && h('div', { class: 'lyric' }, h('span', { class: 'lyric-now' }), h('span', { class: 'lyric-next' })),
-    h('div', { class: 'controls' }, prevBtn, playBtn, nextBtn),
+    h(
+      'div',
+      { class: 'controls' },
+      m.canShuffle && h('button', { class: `mini-ctl${m.shuffle ? ' on' : ''}`, title: 'Shuffle', onclick: send('shuffle') }, icon(ICONS.shuffle)),
+      prevBtn,
+      playBtn,
+      nextBtn,
+      m.canRepeat && h('button', { class: `mini-ctl${m.repeat !== 'none' ? ' on' : ''}`, title: `Repeat: ${m.repeat}`, onclick: send('repeat') }, icon(ICONS.repeat), m.repeat === 'track' ? h('b', { class: 'one' }, '1') : null),
+    ),
+    spotifyRow(m),
     volumeRow(m),
   );
   lastLyric = null;
@@ -501,6 +529,67 @@ function tickLyrics() {
   el.classList.remove('swap');
   void el.offsetWidth;
   el.classList.add('swap');
+}
+
+// Like / playlists through the Spotify Web API (once connected in Settings).
+function spotifyRow(m) {
+  const sp = state.spotify;
+  if (!sp || !sp.connected || !/spotify/i.test(m.app || '')) return null;
+  const like = h(
+    'button',
+    {
+      class: `sp-btn${sp.liked ? ' liked' : ''}`,
+      title: sp.liked ? 'Remove from Liked Songs' : 'Save to Liked Songs',
+      onclick: async () => {
+        const r = await window.island.spotify('like');
+        if (r && r.ok) flash({ id: `like:${Date.now()}`, lead: dot('done'), text: r.liked ? 'Saved to Liked Songs' : 'Removed from Liked Songs', trail: '♥' }, 2000);
+        else flash({ id: `like:${Date.now()}`, lead: dot(), text: (r && r.error) || "Couldn't do that", trail: '' }, 3000);
+      },
+    },
+    icon(ICONS.heart),
+  );
+  const lists = h(
+    'button',
+    {
+      class: 'sp-btn',
+      title: 'Your playlists',
+      onclick: async () => {
+        state.showPlaylists = !state.showPlaylists;
+        if (state.showPlaylists && !(sp.playlists && sp.playlists.length)) await window.island.spotify('playlists');
+        renderMedia();
+      },
+    },
+    icon(ICONS.list),
+  );
+  const row = h('div', { class: 'sp-row' }, like, lists);
+  if (!state.showPlaylists) return row;
+  const pl = (sp.playlists || []).slice(0, 30);
+  return h(
+    'div',
+    { class: 'sp-wrap' },
+    row,
+    h(
+      'div',
+      { class: 'playlists' },
+      pl.length
+        ? pl.map((p) =>
+            h(
+              'button',
+              {
+                class: 'playlist',
+                onclick: async () => {
+                  const r = await window.island.spotify('play', p.uri);
+                  flash({ id: `pl:${Date.now()}`, lead: dot(r && r.ok ? 'done' : ''), text: r && r.ok ? `Playing ${p.name}` : (r && r.error) || "Couldn't play that", trail: '' }, 3000);
+                  state.showPlaylists = false;
+                  renderMedia();
+                },
+              },
+              p.name,
+            ),
+          )
+        : h('div', { class: 'empty small' }, 'Loading playlists…'),
+    ),
+  );
 }
 
 // Scroll anywhere on the music tab to change the volume.
@@ -634,6 +723,33 @@ function renderCalendar() {
           ),
       ),
     );
+  }
+  // Homework plan from Claude
+  if (due.length || (state.plan && state.plan.blocks && state.plan.blocks.length)) {
+    const p = state.plan;
+    const busy = state.planning && state.planning.status === 'working';
+    items.push(
+      h(
+        'div',
+        { class: 'heading plan-head' },
+        'Plan',
+        h('button', { class: 'pill-btn ghost', disabled: busy, onclick: () => window.island.plan('make') }, busy ? 'Planning…' : p && p.blocks && p.blocks.length ? 'Re-plan' : 'Plan my homework'),
+      ),
+    );
+    if (state.planning && state.planning.status === 'error') items.push(h('div', { class: 'empty small' }, `⚠ ${state.planning.error}`));
+    if (p && p.summary) items.push(h('div', { class: 'empty small' }, p.summary));
+    for (const b of (p && p.blocks) || []) {
+      const live = b.start <= now && b.start + b.minutes * 60e3 > now;
+      items.push(
+        h(
+          'div',
+          { class: `row${live ? ' now' : ''}` },
+          h('span', { class: 'time' }, `${fmtDue(b.start, now) === 'today' ? '' : `${fmtDue(b.start, now)} `}${fmtTime(b.start)}`),
+          h('div', { class: 'main' }, h('div', { class: 'title' }, b.task), h('div', { class: 'sub' }, `${b.minutes} min · ${b.why}`)),
+          live && h('button', { class: 'pill-btn', onclick: () => startTimer(b.minutes) }, 'Start'),
+        ),
+      );
+    }
   }
   if (earlier) items.push(h('div', { class: 'empty small' }, `${earlier} earlier today already done`));
   if (!c.events.length) items.push(h('div', { class: 'empty' }, 'Nothing today or tomorrow 🎉'));
@@ -806,9 +922,58 @@ function blockedList() {
   return h('div', { class: 'blocked-list', title: 'Edit in config.json → lockdown' }, `Blocks ${sites.slice(0, 6).join(', ')}${sites.length > 6 ? ` +${sites.length - 6}` : ''} · YouTube & Spotify allowed`);
 }
 
+function newCard() {
+  window.island.flashcard().then((c) => {
+    state.card = c ? { ...c, flipped: false } : null;
+    if (state.tab === 'timer') renderTimer();
+  });
+}
+
+function flashcardBlock() {
+  const c = state.card;
+  if (!state.flashcards || !state.flashcards.count) {
+    return h('div', { class: 'card empty-card' }, 'No flashcards yet. In any Obsidian note write a line like ', h('b', {}, 'mitosis :: cell division into two identical cells'));
+  }
+  if (!c) {
+    newCard();
+    return h('div', { class: 'card' }, 'Shuffling…');
+  }
+  return h(
+    'div',
+    { class: `card${c.flipped ? ' flipped' : ''}`, onclick: () => ((c.flipped = !c.flipped), renderTimer()) },
+    h('div', { class: 'card-q' }, c.q),
+    c.flipped ? h('div', { class: 'card-a' }, c.a) : h('div', { class: 'card-hint' }, 'tap to flip'),
+    c.flipped &&
+      h(
+        'div',
+        { class: 'card-btns' },
+        h('button', { class: 'pill-btn ghost', onclick: (e) => (e.stopPropagation(), newCard()) }, 'Again'),
+        h('button', { class: 'pill-btn', onclick: (e) => (e.stopPropagation(), newCard()) }, 'Got it'),
+      ),
+    h('div', { class: 'card-src' }, c.source),
+  );
+}
+
+function plannedNow() {
+  const p = state.plan;
+  if (!p || !p.blocks) return null;
+  const now = Date.now();
+  const b = p.blocks.find((x) => x.start <= now + 5 * 60e3 && x.start + x.minutes * 60e3 > now);
+  if (!b || state.timer) return null;
+  return h('div', { class: 'planned' }, h('span', {}, `Planned now: ${b.task}`), h('button', { class: 'pill-btn', onclick: () => startTimer(b.minutes) }, `Start ${b.minutes}m`));
+}
+
 function renderTimer() {
   const root = $('#timer');
   const t = state.timer;
+  const resting = t && t.phase && t.phase !== 'focus';
+  if (state.cardsMode || resting) {
+    // Breaks (and "cards" from the launcher) are for flashcards.
+    if (state.cardsMode && !resting) {
+      fill(root, flashcardBlock(), h('button', { class: 'pill-btn ghost', onclick: () => ((state.cardsMode = false), renderTimer()) }, 'Done'));
+      return;
+    }
+  }
   if (!t) {
     fill(root, 
       h('div', { class: 'timer-big idle' }, '00:00'),
@@ -823,7 +988,9 @@ function renderTimer() {
         renderTimer();
       }),
       lockdownOn() && blockedList(),
+      plannedNow(),
       statsLine(),
+      state.flashcards && state.flashcards.count ? h('button', { class: 'pill-btn ghost', onclick: () => ((state.cardsMode = true), newCard()) }, `Flashcards · ${state.flashcards.count}`) : null,
       screenTimeBlock(),
     );
     return;
@@ -846,8 +1013,8 @@ function renderTimer() {
       lockdownToggle(t.lockdown, () => window.island.timer('lockdown', !t.lockdown)),
       h('button', { class: 'pill-btn', onclick: () => window.island.timer('stop') }, 'Stop'),
     ),
-    statsLine(),
-    screenTimeBlock(),
+    resting ? flashcardBlock() : statsLine(),
+    resting ? null : screenTimeBlock(),
   );
 }
 
@@ -956,6 +1123,217 @@ function renderClip() {
   );
 }
 
+// ---------- home screen (widgets) ----------
+
+const DEFAULT_WIDGETS = ['music', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system'];
+const open = (tab) => (e) => {
+  if (e.target.closest('button, input')) return;
+  state.tab = tab;
+  render();
+};
+const stop = (fn) => (e) => {
+  e.stopPropagation();
+  fn(e);
+};
+
+function widget(kind, tab, title, ...body) {
+  return h('div', { class: `widget w-${kind}`, onclick: open(tab) }, h('div', { class: 'w-title' }, title), ...body);
+}
+
+const WIDGET_RENDER = {
+  music() {
+    const m = state.media;
+    if (!m || !m.active || !m.title) return widget('music wide', 'media', 'Music', h('div', { class: 'w-big muted' }, 'Nothing playing'));
+    const send = (cmd) => stop(() => window.island.media(cmd));
+    return widget(
+      'music wide',
+      'media',
+      appName(m.app) || 'Music',
+      h(
+        'div',
+        { class: 'w-row' },
+        m.art ? h('img', { class: 'w-art', src: m.art, alt: '' }) : h('div', { class: 'w-art' }),
+        h('div', { class: 'w-col' }, h('div', { class: 'w-song' }, m.title), h('div', { class: 'w-sub' }, m.artist || '')),
+        h(
+          'div',
+          { class: 'w-ctl' },
+          h('button', { onclick: send('prev'), title: 'Previous' }, icon(ICONS.prev)),
+          h('button', { class: 'play', onclick: send('toggle'), title: m.playing ? 'Pause' : 'Play' }, icon(m.playing ? ICONS.pause : ICONS.play)),
+          h('button', { onclick: send('next'), title: 'Next' }, icon(ICONS.next)),
+        ),
+      ),
+      m.duration > 0 && h('div', { class: 'track w-track' }, h('i', { style: `width:${(mediaPosition(m) / m.duration) * 100}%` })),
+    );
+  },
+  next() {
+    const now = Date.now();
+    const events = (state.calendar && state.calendar.events) || [];
+    const cur = events.find((e) => !e.allDay && e.start <= now && e.end > now);
+    const nxt = events.find((e) => !e.allDay && e.start > now);
+    const cd = countdowns(now)[0];
+    const extra = cd ? ` · ${cd.days}d to ${cd.title}` : '';
+    if (cur) return widget('next', 'calendar', `Now · ${cur.title}`, h('div', { class: 'w-big' }, `${Math.ceil((cur.end - now) / 60e3)}m`), h('div', { class: 'w-sub' }, `left${extra}`));
+    if (nxt) return widget('next', 'calendar', `Next · ${nxt.title}`, h('div', { class: 'w-big' }, fmtTime(nxt.start)), h('div', { class: 'w-sub' }, `${dayKey(nxt.start) === dayKey(now) ? fmtUntil(nxt.start) : 'tomorrow'}${extra}`));
+    return widget('next', 'calendar', 'Next', h('div', { class: 'w-big muted' }, 'Free'), h('div', { class: 'w-sub' }, `nothing else today${extra}`));
+  },
+  weather() {
+    const w = state.weather;
+    if (!w || w.status !== 'ok') return widget('weather', 'calendar', 'Weather', h('div', { class: 'w-sub' }, w && w.status === 'unconfigured' ? 'Set your city in Settings' : 'Loading…'));
+    return widget('weather', 'calendar', w.place, h('div', { class: 'w-big' }, `${w.temp}°`), h('div', { class: 'w-sub' }, `${w.glyph} ${w.label}`));
+  },
+  due() {
+    const items = dueItems().slice(0, 3);
+    return widget(
+      'due',
+      'calendar',
+      'Due',
+      items.length ? items.map((e) => h('div', { class: 'w-item' }, h('span', { class: 'w-when' }, fmtDue(e.start)), h('span', { class: 'w-what' }, e.title))) : h('div', { class: 'w-sub' }, state.homework && state.homework.status === 'unconfigured' ? 'Add ManageBac in Settings' : 'Nothing due 🎉'),
+    );
+  },
+  focus() {
+    const t = state.timer;
+    if (t) {
+      const left = Math.max(0, (t.end - Date.now()) / 1000);
+      return widget('focus', 'timer', t.phase && t.phase !== 'focus' ? 'Break' : t.lockdown ? 'Focus · locked' : 'Focus', h('div', { class: 'w-big w-timer' }, fmtDuration(left).padStart(5, '0')), h('div', { class: 'w-sub' }, `ends ${fmtTime(t.end)}`));
+    }
+    const st = state.stats;
+    return widget(
+      'focus',
+      'timer',
+      'Focus',
+      h('button', { class: 'pill-btn', onclick: stop(() => startTimer(0, 'pomodoro')) }, 'Pomodoro'),
+      h('div', { class: 'w-sub' }, st ? `${st.streak ? `🔥 ${st.streak}d · ` : ''}${st.today} today` : ''),
+    );
+  },
+  todo() {
+    const open_ = (state.todos || []).filter((t) => !t.done);
+    return widget(
+      'todo',
+      'todo',
+      `To-do${open_.length ? ` · ${open_.length}` : ''}`,
+      open_.length
+        ? open_.slice(0, 3).map((t) => h('div', { class: 'w-item' }, h('button', { class: 'check', onclick: stop(() => window.island.todo('toggle', t.id)) }), h('span', { class: 'w-what' }, t.text)))
+        : h('div', { class: 'w-sub' }, 'All clear'),
+    );
+  },
+  claude() {
+    const sessions = state.claude || [];
+    const waiting = sessions.filter((x) => x.state === 'waiting');
+    const prs = (state.github && state.github.prs) || [];
+    return widget(
+      'claude',
+      'claude',
+      'Claude',
+      waiting.length
+        ? [h('div', { class: 'w-big w-alert' }, String(waiting.length)), h('div', { class: 'w-sub' }, `waiting · ${waiting[0].project}`)]
+        : [h('div', { class: 'w-big' }, String(sessions.filter((x) => x.state === 'working').length)), h('div', { class: 'w-sub' }, 'working')],
+      h('div', { class: 'w-foot' }, `${prs.length} PR${prs.length === 1 ? '' : 's'}${prs.some((p) => p.ci === 'fail') ? ' · CI ✗' : ''}`),
+    );
+  },
+  system() {
+    const sy = state.sys;
+    const b = state.battery;
+    return widget(
+      'system',
+      'sys',
+      'System',
+      sysBar('CPU', sy ? sy.cpu : 0, sy ? `${sy.cpu}%` : '…'),
+      sysBar('RAM', sy ? (sy.mem.used / sy.mem.total) * 100 : 0, sy ? `${Math.round((sy.mem.used / sy.mem.total) * 100)}%` : '…'),
+      b && sysBar('BAT', b.level * 100, `${Math.round(b.level * 100)}%${b.charging ? '⚡' : ''}`),
+    );
+  },
+  stats() {
+    const st = state.stats || { minutesToday: 0, streak: 0 };
+    const scr = state.screentime || { distracting: 0 };
+    return widget('stats', 'timer', 'Today', h('div', { class: 'w-big' }, `${st.minutesToday || 0}m`), h('div', { class: 'w-sub' }, `focused · ${fmtSpent(scr.distracting || 0)} distracted`));
+  },
+  plan() {
+    const p = state.plan;
+    const now = Date.now();
+    const b = p && p.blocks && p.blocks.find((x) => x.start + x.minutes * 60e3 > now);
+    return widget(
+      'plan',
+      'calendar',
+      'Plan',
+      b ? [h('div', { class: 'w-line' }, b.task), h('div', { class: 'w-big' }, fmtTime(b.start)), h('div', { class: 'w-sub' }, `${b.minutes} min`)] : h('button', { class: 'pill-btn ghost', onclick: stop(() => window.island.plan('make')) }, 'Plan homework'),
+    );
+  },
+  clip() {
+    const c = (state.clipboard || [])[0];
+    return widget('clip', 'clip', 'Last copied', h('div', { class: 'w-clip' }, c ? (c.secret ? '•••••••• (hidden)' : c.text.replace(/\s+/g, ' ').slice(0, 90)) : 'Nothing yet'));
+  },
+};
+
+function sysBar(label, pct, text) {
+  return h('div', { class: 'sys-bar' }, h('span', { class: 'sb-label' }, label), h('span', { class: 'st-bar' }, h('i', { style: `width:${Math.max(2, Math.min(100, pct))}%` })), h('span', { class: 'sb-val' }, text));
+}
+
+function renderHome() {
+  const list = (state.settings && state.settings.homeWidgets) || DEFAULT_WIDGETS;
+  fill($('#home'), ...list.map((k) => WIDGET_RENDER[k] && WIDGET_RENDER[k]()), h('button', { class: 'widget add-widget', onclick: () => window.island.openSettings(), title: 'Choose widgets in Settings' }, '+'));
+}
+
+// The 1s tick only nudges numbers on the home screen (no rebuild under the cursor).
+function tickHome() {
+  const t = state.timer;
+  const el = $('#home .w-timer');
+  if (el && t) el.textContent = fmtDuration(Math.max(0, (t.end - Date.now()) / 1000)).padStart(5, '0');
+  const m = state.media;
+  const bar = $('#home .w-track i');
+  if (bar && m && m.duration) bar.style.width = `${(mediaPosition(m) / m.duration) * 100}%`;
+}
+
+// ---------- system tab ----------
+
+function fmtUptime(sec) {
+  const hrs = Math.floor(sec / 3600);
+  const d = Math.floor(hrs / 24);
+  return d ? `${d}d ${hrs % 24}h` : `${hrs}h ${Math.floor((sec % 3600) / 60)}m`;
+}
+
+function renderSys() {
+  const sy = state.sys;
+  const b = state.battery;
+  const items = [h('div', { class: 'heading' }, 'This PC')];
+  if (sy) {
+    items.push(sysBar('CPU', sy.cpu, `${sy.cpu}%`));
+    items.push(sysBar('RAM', (sy.mem.used / sy.mem.total) * 100, `${(sy.mem.used / 1073741824).toFixed(1)} / ${Math.round(sy.mem.total / 1073741824)} GB`));
+  }
+  if (b) {
+    const left = !b.charging && Number.isFinite(b.dischargingTime) ? ` · ${fmtUptime(b.dischargingTime)} left` : b.charging ? ' · charging' : '';
+    items.push(sysBar('BAT', b.level * 100, `${Math.round(b.level * 100)}%${left}`));
+  }
+  if (sy) {
+    items.push(h('div', { class: 'sys-line' }, sy.wifi && sy.wifi.connected ? `Wi-Fi · ${sy.wifi.ssid} · ${sy.wifi.signal}%` : 'Wi-Fi · not connected', h('span', { class: 'side' }, `up ${fmtUptime(sy.uptime)}`)));
+  }
+  if (state.classMode) items.push(h('div', { class: 'sys-line' }, '● Class mode is on (notifications quiet)'));
+  // Today recap (the same numbers the bedtime summary uses)
+  const st = state.stats || { minutesToday: 0, today: 0, streak: 0 };
+  const scr = state.screentime || { total: 0, distracting: 0, items: [] };
+  items.push(h('div', { class: 'heading' }, 'Today'));
+  items.push(
+    h(
+      'div',
+      { class: 'recap' },
+      h('div', { class: 'rc' }, h('b', {}, `${st.minutesToday || 0}m`), h('small', {}, 'focused')),
+      h('div', { class: 'rc' }, h('b', {}, String(st.today || 0)), h('small', {}, 'sessions')),
+      h('div', { class: 'rc' }, h('b', {}, fmtSpent(scr.total || 0)), h('small', {}, 'on screen')),
+      h('div', { class: `rc${scr.distracting ? ' bad' : ''}` }, h('b', {}, fmtSpent(scr.distracting || 0)), h('small', {}, 'distracted')),
+    ),
+  );
+  fill($('#sys'), ...items);
+}
+
+if (navigator.getBattery) {
+  navigator.getBattery().then((b) => {
+    const read = () => {
+      state.battery = { level: b.level, charging: b.charging, dischargingTime: b.dischargingTime };
+    };
+    read();
+    for (const ev of ['levelchange', 'chargingchange', 'dischargingtimechange']) b.addEventListener(ev, read);
+  });
+}
+
 // ---------- mic / camera dots (like a phone's privacy indicators) ----------
 
 function renderPrivacy() {
@@ -974,7 +1352,7 @@ const launchResults = $('#launch-results');
 let launchItems = [];
 let launchSel = 0;
 let searchSeq = 0;
-const KIND_GLYPH = { addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
+const KIND_GLYPH = { askscreen: '◩', translate: '文', cards: '▤', addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
 
 function renderLaunchResults() {
   const a = state.ask;
@@ -986,7 +1364,7 @@ function renderLaunchResults() {
         { class: `answer${a.status === 'error' ? ' err' : ''}` },
         h('div', { class: 'answer-q' }, `✦ ${a.question}`),
         h('div', { class: 'answer-text' }, a.text || (a.status === 'streaming' ? 'Thinking…' : '')),
-        a.status === 'streaming' ? h('div', { class: 'answer-meta' }, 'Claude is answering · Esc to stop') : h('div', { class: 'answer-meta' }, 'Enter a new question, or Esc to close'),
+        a.status === 'streaming' ? h('div', { class: 'answer-meta' }, `${a.who || 'AI'} is answering · Esc to stop`) : h('div', { class: 'answer-meta' }, `${a.who ? `${a.who} · ` : ''}Enter a new question, or Esc to close`),
       ),
     );
     const t = launchResults.querySelector('.answer-text');
@@ -1127,6 +1505,39 @@ function onEvent(e) {
     if (isPrimary) chime();
   } else if (e.type === 'sleep') {
     flash({ id: `sl:${e.at}`, alert: !e.soft, lead: h('span', { class: 'glyph-text' }, '☾'), text: e.text, trail: e.soft ? '' : 'SLEEP' }, e.soft ? 8000 : 12000);
+  } else if (e.type === 'plan-start') {
+    flash({ id: `plan:${e.at}`, alert: true, tab: 'timer', lead: h('span', { class: 'glyph-text' }, '✎'), text: `Time for: ${e.task}`, trail: `${e.minutes}m` }, 15000);
+    if (isPrimary) chime();
+  } else if (e.type === 'summary') {
+    const lines = [`${e.focusMinutes}m focused`, `${e.screenMinutes}m on screen`];
+    if (e.distractedMinutes) lines.push(`${e.distractedMinutes}m distracted${e.topDistraction ? ` (${e.topDistraction})` : ''}`);
+    const tomorrow = e.firstTomorrow ? `Tomorrow: ${e.firstTomorrow.title} at ${fmtTime(e.firstTomorrow.start)}` : 'Nothing early tomorrow';
+    flash(
+      {
+        id: `sum:${e.at}`,
+        peek: true,
+        tab: 'sys',
+        lead: h('span', { class: 'app-badge' }, '☾'),
+        text: h('span', { class: 'two' }, h('b', {}, lines.join(' · ')), h('small', {}, `${tomorrow}${e.due.length ? ` · due: ${e.due.join(', ')}` : ''}`)),
+        textKey: `sum:${e.at}`,
+        trail: '',
+      },
+      15000,
+    );
+  } else if (e.type === 'translated') {
+    flash(
+      { id: `tr:${e.at}`, peek: true, tab: 'clip', lead: h('span', { class: 'app-badge' }, '文'), text: h('span', { class: 'two' }, h('b', {}, e.text), h('small', {}, `Translated to ${e.toName}`)), textKey: `tr:${e.at}`, trail: '' },
+      9000,
+    );
+  } else if (e.type === 'open-tab') {
+    if (e.cards) {
+      state.cardsMode = true;
+      state.card = null;
+    }
+    state.tab = e.tab;
+    if (state.launching) closeLauncher();
+    if (isPrimary) expand();
+    render();
   } else if (e.type === 'timer-done') {
     state.timerDoneAt = e.at;
     if (isPrimary) chime();
@@ -1204,9 +1615,13 @@ function applySettings(s) {
 
 // ---------- tabs + expand/collapse ----------
 
+const TAB_NAMES = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System' };
+for (const b of document.querySelectorAll('.dock button[data-icon]')) b.prepend(icon(ICONS[b.dataset.icon]));
+
 function renderTabs() {
   for (const b of document.querySelectorAll('.tabs button[data-tab]')) b.classList.toggle('active', b.dataset.tab === state.tab);
   for (const p of document.querySelectorAll('.panel')) p.classList.toggle('active', p.dataset.panel === state.tab);
+  $('#tab-name').textContent = state.tab === 'home' ? '' : TAB_NAMES[state.tab] || '';
 }
 
 for (const b of document.querySelectorAll('.tabs button[data-tab]')) {
@@ -1218,11 +1633,11 @@ for (const b of document.querySelectorAll('.tabs button[data-tab]')) {
 }
 
 // Pill geometry in window coordinates, so the main process can tell when the cursor is over it.
-const WIN_W = 480;
+const WIN_W = 640;
 function reportRect() {
   let w = 250;
   let hgt = 36;
-  if (state.expanded) [w, hgt] = [440, 288];
+  if (state.expanded) [w, hgt] = [580, 330];
   else if (islandEl.classList.contains('peek')) [w, hgt] = [340, 58];
   else if (islandEl.classList.contains('alert')) w = 330;
   const r = { x: (WIN_W - w) / 2, y: 0, w, h: hgt };
@@ -1236,8 +1651,8 @@ const pinned = new URLSearchParams(location.search).get('expand');
 
 function expand() {
   if (state.expanded) return;
-  // Open on whatever the pill was showing.
-  if (currentCompact && currentCompact.tab) state.tab = currentCompact.tab;
+  // Alerts and peeks open on their tab; otherwise you land on Home.
+  state.tab = currentCompact && (currentCompact.alert || currentCompact.peek) && currentCompact.tab ? currentCompact.tab : 'home';
   state.expanded = true;
   state.peekUntil = 0;
   scrollCalendar = true;
@@ -1283,6 +1698,8 @@ function render() {
   if (state.tab === 'timer') renderTimer();
   if (state.tab === 'todo') renderTodo();
   if (state.tab === 'clip') renderClip();
+  if (state.tab === 'home') renderHome();
+  if (state.tab === 'sys') renderSys();
 }
 
 function mediaShape(m) {
@@ -1328,6 +1745,15 @@ window.island.onUpdate((key, value) => {
   if (key === 'lyrics') {
     state.lyrics = value;
     if (state.expanded && state.tab === 'media') tickLyrics();
+    return;
+  }
+  if (key === 'sys') {
+    state.sys = value;
+    if (state.expanded && state.tab === 'sys') renderSys();
+    if (state.expanded && state.tab === 'home') {
+      const w = $('#home .w-system');
+      if (w) w.replaceWith(WIDGET_RENDER.system());
+    }
     return;
   }
   if (key === 'privacy') {
@@ -1400,4 +1826,5 @@ setInterval(() => {
     tickLyrics();
   }
   if (state.expanded && state.tab === 'timer') tickTimer();
+  if (state.expanded && state.tab === 'home') tickHome();
 }, 1000);

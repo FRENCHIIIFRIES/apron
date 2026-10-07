@@ -5,7 +5,10 @@ const os = require('os');
 const path = require('path');
 
 const PREFIXES = [
-  { re: /^(\?|ask\s+)/i, kind: 'ask', hint: 'Ask Claude' },
+  { re: /^(\?\?|ask screen\s+)/i, kind: 'askscreen', hint: 'Ask AI about my screen' },
+  { re: /^(\?|ask\s+)/i, kind: 'ask', hint: 'Ask AI' },
+  { re: /^(tr|translate)\s+/i, kind: 'translate', hint: 'Translate' },
+  { re: /^(cards|flashcards)$/i, kind: 'cards', hint: 'Study flashcards', bare: true },
   { re: /^(n|note)\s+/i, kind: 'note', hint: 'Save note' },
   { re: /^(t|todo)\s+/i, kind: 'todo', hint: 'Add to-do' },
   { re: /^(g|google)\s+/i, kind: 'search', hint: 'Search Google' },
@@ -84,6 +87,7 @@ function search(index, input) {
   }
   for (const p of PREFIXES) {
     if (p.re.test(raw)) {
+      if (p.bare) return [{ kind: p.kind, title: p.hint, hint: '' }];
       const rest = raw.replace(p.re, '').trim();
       return rest ? [{ kind: p.kind, title: rest, hint: p.hint }] : [{ kind: 'hint', title: `${p.hint}…`, hint: 'keep typing' }];
     }
@@ -98,7 +102,7 @@ function search(index, input) {
     .slice(0, 5)
     .map(({ it }) => ({ kind: 'open', title: it.name, hint: it.type === 'app' ? 'App' : it.type === 'folder' ? 'Folder' : 'File', path: it.path }));
   results.push(...apps);
-  if (raw.includes('?') || raw.split(/\s+/).length >= 4) results.push({ kind: 'ask', title: raw, hint: 'Ask Claude' });
+  if (raw.includes('?') || raw.split(/\s+/).length >= 4) results.push({ kind: 'ask', title: raw, hint: 'Ask AI' });
   results.push({ kind: 'search', title: raw, hint: 'Search Google' });
   return results.slice(0, 6);
 }
