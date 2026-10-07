@@ -19,10 +19,12 @@
 
     <div class="expanded">
       <nav class="tabs">
-        <button data-tab="media">Now Playing</button>
-        <button data-tab="calendar">Calendar</button>
-        <button data-tab="claude">Claude <span class="badge" id="claude-badge"></span></button>
-        <button data-tab="timer">Timer</button>
+        <button data-tab="media">Music</button>
+        <button data-tab="calendar">Cal</button>
+        <button data-tab="claude">Claude<span class="badge" id="claude-badge"></span></button>
+        <button data-tab="timer">Focus</button>
+        <button data-tab="todo">To-do<span class="badge" id="todo-badge"></span></button>
+        <button data-tab="clip">Clip</button>
         <button class="pill-btn update-btn" id="update-btn" hidden>Update</button>
         <span class="clock" id="clock"></span>
         <button class="swatch-toggle" id="swatch-toggle" title="Accent colour"></button>
@@ -48,6 +50,17 @@
 
       <section class="panel" data-panel="timer">
         <div class="timer" id="timer"></div>
+      </section>
+
+      <section class="panel" data-panel="todo">
+        <form class="todo-add" id="todo-form" autocomplete="off">
+          <input id="todo-input" maxlength="200" placeholder="Add a to-do and press Enter">
+        </form>
+        <div class="list" id="todo"></div>
+      </section>
+
+      <section class="panel" data-panel="clip">
+        <div class="list" id="clip"></div>
       </section>
     </div>
     </div>

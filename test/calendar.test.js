@@ -24,7 +24,7 @@ BEGIN:VEVENT
 UID:dentist@google.com
 DTSTART:20261007T140000Z
 DTEND:20261007T150000Z
-SUMMARY:Dentist
+SUMMARY:Dentist &amp; checkup
 LOCATION:Main St
 END:VEVENT
 BEGIN:VEVENT
@@ -46,7 +46,7 @@ const to = new Date('2026-10-09T00:00:00Z');
 
 test('expands recurrences and keeps only events in range', () => {
   const titles = parseEvents(ICS, from, to).map((e) => e.title).sort();
-  assert.deepStrictEqual(titles, ['Dentist', 'Holiday', 'Standup', 'Standup (moved)']);
+  assert.deepStrictEqual(titles, ['Dentist & checkup', 'Holiday', 'Standup', 'Standup (moved)']);
 });
 
 test('uses the overridden instance time', () => {
@@ -57,7 +57,7 @@ test('uses the overridden instance time', () => {
 test('finds meeting links and flags all-day events', () => {
   const events = parseEvents(ICS, from, to);
   assert.strictEqual(events.find((e) => e.title === 'Standup').joinUrl, 'https://meet.google.com/abc-defg-hij');
-  assert.strictEqual(events.find((e) => e.title === 'Dentist').joinUrl, null);
+  assert.strictEqual(events.find((e) => e.title === 'Dentist & checkup').joinUrl, null);
   assert.strictEqual(events.find((e) => e.title === 'Holiday').allDay, true);
-  assert.strictEqual(events.find((e) => e.title === 'Dentist').location, 'Main St');
+  assert.strictEqual(events.find((e) => e.title === 'Dentist & checkup').location, 'Main St');
 });

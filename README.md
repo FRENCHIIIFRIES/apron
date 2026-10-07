@@ -2,10 +2,12 @@
 
 A Nothing-style Dynamic Island for Windows. A black notch at the top of the screen that shows what matters right now and opens on hover.
 
-- **Music.** Whatever is playing in Spotify, a browser, or any app that uses Windows media controls. Play/pause, skip, volume (scroll the music tab), album art in black & white or colour, and a short peek when the track changes.
-- **Google Calendar.** Today and tomorrow from your calendar's secret iCal link, a live "12m left" countdown for the current class, Join buttons for Meet, Zoom and Teams links.
-- **Claude Code.** The notch pulses when a session needs you and flashes when one finishes. You also see your open PRs with CI status, and branches you pushed without a PR.
-- **Focus timer**, battery notices, an accent colour picker, and **Ctrl+Alt+Space** to keep it open.
+- **Music.** Whatever is playing in Spotify, a browser, or any app that uses Windows media controls. Play/pause, skip, volume (scroll the music tab), synced **lyrics**, album art in black & white or colour, and a short peek when the track changes.
+- **Google Calendar + weather.** Today and tomorrow from your calendar's secret iCal link, a live "12m left" countdown for the current class, Join buttons for Meet/Zoom/Teams, the temperature, and a warning when rain is likely before your next class.
+- **Claude Code.** The notch pulses when a session needs you, and you can **Allow or Deny permission requests right from the notch** (the terminal prompt still works too, whichever you answer first wins). Also your open PRs with CI status and branches pushed without a PR.
+- **Focus + lockdown.** 5/15/25/50 minute timers. With lockdown on, Instagram, TikTok, X, Reddit and other distracting sites get their tab closed the moment you open them; YouTube and Spotify stay allowed. Distracting apps' notifications stay quiet too.
+- **Notifications.** Windows notifications (Discord, WhatsApp, anything) peek in the notch. If your phone is linked with Phone Link, **2FA codes** texted to your phone pop up big with a Copy button, and **incoming calls** ring in the notch.
+- **To-do list, clipboard history** (memory only; things that look like passwords are masked), battery notices, accent colours, one notch on every screen, and **Ctrl+Alt+Space** to keep it open.
 
 ## Install
 
@@ -23,9 +25,21 @@ Right-click the tray icon → **Open config** (`%APPDATA%\Apron\config.json`):
   "accent": "#d71921",
   "artColor": false,
   "startWithWindows": true,
+  "weatherCity": "Hyderabad, IN",
+  "displays": "all",
+  "notifications": true,
+  "clipboard": true,
+  "lockdown": {
+    "extraSites": ["chess.com"],
+    "allowSites": [],
+    "unblock": ["Discord"],
+    "apps": ["RobloxPlayerBeta.exe"]
+  },
   "offsetY": 0
 }
 ```
+
+`lockdown`: `extraSites` adds sites to block, `allowSites` always allows them, `unblock` removes built-in ones (by name), and `apps` minimises those programs during focus.
 
 Get the iCal link from Google Calendar → Settings → your calendar → **Secret address in iCal format**. Keep it private: anyone with it can read your calendar.
 
@@ -48,7 +62,7 @@ npm test
 npm run dist     # build the installer into dist/
 ```
 
-`APRON_EXPAND=media` (or `calendar`, `claude`, `timer`) pins the island open on a tab, for screenshots.
+`APRON_EXPAND=media` (or `calendar`, `claude`, `timer`, `todo`, `clip`) pins the island open on a tab, for screenshots.
 
 ## Release
 

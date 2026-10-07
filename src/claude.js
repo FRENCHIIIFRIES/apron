@@ -18,10 +18,11 @@ function reduce(sessions, payload, now = Date.now()) {
   const next = { ...sessions };
   switch (payload.hook_event_name) {
     case 'PermissionRequest':
-      next[id] = { ...base, state: 'waiting', message: permissionMessage(payload) };
+      next[id] = { ...base, state: 'waiting', message: permissionMessage(payload), approval: approvalFor(payload) };
       break;
     case 'Notification':
-      next[id] = { ...base, state: 'waiting', message: payload.message || 'Claude needs your input' };
+      // Keep a pending approval: the permission_prompt notification follows the request.
+      next[id] = { ...base, state: 'waiting', message: payload.message || 'Claude needs your input', approval: prev.approval || null };
       break;
     case 'Stop':
       next[id] = { ...base, state: 'done', message: 'Finished' };
@@ -42,6 +43,13 @@ function reduce(sessions, payload, now = Date.now()) {
       return sessions;
   }
   return next;
+}
+
+/** What the notch shows for an Allow/Deny prompt. */
+function approvalFor(p) {
+  const input = p.tool_input || {};
+  const detail = input.command || input.file_path || input.url || input.pattern || input.path || input.description || input.prompt || '';
+  return { id: p.tool_use_id || `${p.session_id}:${Date.now()}`, tool: p.tool_name || 'a tool', detail: String(detail).slice(0, 160) };
 }
 
 function permissionMessage(p) {
@@ -67,6 +75,35 @@ function list(sessions) {
 
 function start(port, onUpdate) {
   let sessions = {};
+  // PermissionRequest hooks hold their HTTP request open until you pick Allow/Deny
+  // in the notch, you answer in the terminal (any later event for that session),
+  // or it times out. id -> { res, sessionId, timer }
+  const pending = new Map();
+
+  function settle(id, decision) {
+    const p = pending.get(id);
+    if (!p) return;
+    pending.delete(id);
+    clearTimeout(p.timer);
+    if (decision) {
+      p.res.writeHead(200, { 'content-type': 'application/json' });
+      p.res.end(JSON.stringify(decision));
+    } else {
+      p.res.writeHead(204);
+      p.res.end();
+    }
+  }
+
+  function settleSession(sessionId) {
+    for (const [id, p] of pending) if (p.sessionId === sessionId) settle(id, null);
+  }
+
+  function clearApproval(sessionId) {
+    const s = sessions[sessionId];
+    if (!s || !s.approval) return;
+    sessions = { ...sessions, [sessionId]: { ...s, approval: null, state: 'working', message: '', at: Date.now() } };
+    onUpdate(list(sessions));
+  }
   const server = http.createServer((req, res) => {
     // Requiring application/json means a web page can't post here without a CORS preflight.
     const json = String(req.headers['content-type'] || '').startsWith('application/json');
@@ -82,17 +119,40 @@ function start(port, onUpdate) {
       if (body.length > 1e6) req.destroy();
     });
     req.on('end', () => {
+      let payload;
       try {
-        const next = reduce(sessions, JSON.parse(body));
-        if (next !== sessions) {
-          sessions = next;
-          onUpdate(list(sessions));
-        }
+        payload = JSON.parse(body);
       } catch {
-        // ignore bad payloads
+        res.writeHead(204);
+        res.end();
+        return;
       }
-      res.writeHead(204);
-      res.end();
+      const event = payload.hook_event_name;
+      // Anything else from this session means the prompt was answered elsewhere.
+      if (event !== 'PermissionRequest' && event !== 'Notification') settleSession(payload.session_id);
+      const next = reduce(sessions, payload);
+      if (next !== sessions) {
+        sessions = next;
+        onUpdate(list(sessions));
+      }
+      const wantsDecision = event === 'PermissionRequest' && req.headers['x-apron-wait'] === '1' && sessions[payload.session_id];
+      if (!wantsDecision) {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      const id = sessions[payload.session_id].approval.id;
+      settle(id, null); // a duplicate request replaces the old one
+      const timer = setTimeout(() => settle(id, null), 110e3);
+      pending.set(id, { res, sessionId: payload.session_id, timer });
+      // The hook gave up (timeout, or Claude moved on): forget it. Note: listen on the
+      // response, since a request's 'close' fires as soon as its body has been read.
+      res.on('close', () => {
+        if (pending.get(id) && pending.get(id).res === res) {
+          clearTimeout(timer);
+          pending.delete(id);
+        }
+      });
     });
   });
   server.on('error', (err) => console.error('[claude] hook server:', err.message));
@@ -108,8 +168,17 @@ function start(port, onUpdate) {
 
   onUpdate([]);
   return {
+    /** Answer a pending permission request from the notch. */
+    decide(id, allow) {
+      const p = pending.get(id);
+      if (!p) return false;
+      settle(id, allow ? { behavior: 'allow' } : { behavior: 'deny', message: 'Denied from Apron' });
+      clearApproval(p.sessionId);
+      return true;
+    },
     stop() {
       clearInterval(timer);
+      for (const id of [...pending.keys()]) settle(id, null);
       server.close();
     },
   };

@@ -527,3 +527,119 @@ button {
 .update-btn { margin-left: auto; animation: blink 1.6s steps(2, jump-none) infinite; }
 .update-btn[hidden] { display: none; }
 .update-btn:not([hidden]) + .clock { margin-left: 8px; }
+
+/* ---------- v0.3: six tabs, lyrics, weather, approvals, lockdown, to-do, clipboard ---------- */
+
+.tabs { gap: 3px; }
+.tabs button { padding: 4px 7px; font-size: 10px; letter-spacing: 0.05em; }
+.clock { font-size: 16px; }
+
+.glyph-text { font-size: 14px; line-height: 1; }
+.app-badge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-family: var(--dotted);
+  font-weight: 800;
+  font-size: 22px;
+}
+
+/* lyrics: the current line in dot-matrix, the next one dimmed */
+.lyric { display: flex; flex-direction: column; align-items: center; text-align: center; min-height: 34px; gap: 1px; padding: 0 8px; }
+.lyric.swap > * { animation: swap 0.35s var(--spring); }
+.lyric-now { font-family: var(--dotted); font-weight: 800; font-size: 15px; line-height: 1.1; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lyric-next { color: var(--muted); font-size: 10px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lyric.empty-lyric { min-height: 0; }
+.media { gap: 8px; }
+.media-art { width: 72px; height: 72px; }
+
+/* weather strip at the top of the calendar */
+.weather-row { display: flex; align-items: center; gap: 10px; padding: 4px 10px 6px; }
+.weather-temp { font-family: var(--dotted); font-weight: 800; font-size: 26px; line-height: 1; }
+.weather-desc { flex: 1; min-width: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Claude approvals */
+.row.approval { box-shadow: inset 0 0 0 1px var(--accent); align-items: flex-start; }
+.row .detail {
+  margin-top: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #000;
+  color: var(--fg);
+  font-size: 10.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 48px;
+  overflow: hidden;
+}
+.decide { display: flex; flex-direction: column; gap: 4px; flex: none; }
+
+/* focus: lockdown */
+.timer { gap: 8px; }
+.timer-big.locked { color: var(--accent); }
+.lock-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--faint);
+}
+.lock-toggle .lock-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.lock-toggle.on { color: var(--fg); box-shadow: inset 0 0 0 1px var(--accent); }
+.lock-toggle.on .lock-dot { background: var(--accent); }
+.blocked-list { color: var(--muted); font-size: 10px; text-align: center; padding: 0 16px; }
+
+/* to-do */
+.todo-add { padding: 0 2px 8px; }
+.todo-add input {
+  width: 100%;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--row);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.todo-add input:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+.todo-add input::placeholder { color: var(--muted); }
+.check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--muted);
+}
+.check.on { background: var(--accent); box-shadow: none; }
+.todo-row.done .title { color: var(--muted); text-decoration: line-through; }
+.x { flex: none; color: var(--muted); font-size: 16px; width: 20px; }
+.x:hover { color: var(--accent); }
+.clear-done { align-self: center; margin-top: 4px; }
+
+/* clipboard */
+.clip-text { font-weight: 400; font-size: 11.5px; }
+
+/* phone call + one-time codes */
+.app-badge.ringing { animation: ring 0.9s ease-in-out infinite; }
+@keyframes ring {
+  0%, 100% { transform: rotate(0); box-shadow: 0 0 0 0 var(--accent-glow); }
+  25% { transform: rotate(-12deg); }
+  75% { transform: rotate(12deg); box-shadow: 0 0 0 6px transparent; }
+}
+.code { font-family: var(--dotted); font-weight: 800; font-size: 24px; letter-spacing: 0.08em; line-height: 1.1; }
+.two b.code { font-size: 22px; }
+.row.code-row { box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* rows clip their progress fill, so they must never be squeezed by the list */
+.list > * { flex-shrink: 0; }

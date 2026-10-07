@@ -17,9 +17,14 @@ const state = {
   held: false, // opened with Ctrl+Alt+Space: stays open until pressed again
   peekUntil: 0, // track-change preview
   flash: null, // { id, lead, text, trail, until, alert }
-  timer: loadTimer(), // { end, total } while running
+  timer: null, // { end, total, lockdown } while a focus session runs (owned by main)
   timerDoneAt: 0,
+  weather: null,
+  lyrics: null,
+  todos: [],
+  clipboard: [],
 };
+const isPrimary = new URLSearchParams(location.search).get('primary') !== '0';
 
 // ---------- tiny DOM helper (textContent only, never innerHTML with data) ----------
 
@@ -131,6 +136,7 @@ function compactView() {
   if (done) return { id: 'done', tab: 'claude', lead: dot('done'), text: `${done.project} is done`, trail: '✓' };
 
   if (state.flash && state.flash.until > now) return state.flash;
+  if (state.flash && state.flash.until <= now) state.flash = null;
 
   const m = state.media;
   if (isPlaying(m) && now < state.peekUntil) {
@@ -147,7 +153,7 @@ function compactView() {
 
   if (state.timer) {
     const left = Math.max(0, (state.timer.end - now) / 1000);
-    return { id: 'timer', tab: 'timer', lead: h('span', { class: 'glyph' }, icon(ICONS.timer)), text: 'Focus', trail: fmtDuration(left) };
+    return { id: 'timer', tab: 'timer', lead: h('span', { class: 'glyph' }, icon(ICONS.timer)), text: state.timer.lockdown ? 'Focus · locked' : 'Focus', trail: fmtDuration(left) };
   }
 
   const events = (state.calendar && state.calendar.events) || [];
@@ -181,6 +187,20 @@ function rotationItems(now, events, soon) {
   if (soon) items.push({ id: 'soon', tab: 'calendar', lead: calLead(), text: soon.title, trail: fmtUntil(soon.start) });
   const next = events.find((e) => !e.allDay && e.start > now && e !== soon && dayKey(e.start) === dayKey(now));
   if (next && !soon) items.push({ id: 'next', tab: 'calendar', lead: calLead(), text: `Next · ${next.title}`, trail: fmtTime(next.start) });
+
+  const w = state.weather;
+  if (w && w.status === 'ok') {
+    // Rain warning for the next class within the hour.
+    const nextClass = events.find((e) => !e.allDay && e.start > now && e.start - now < 60 * 60e3);
+    const rain = nextClass ? rainChance(w, nextClass.start) : null;
+    if (rain != null && rain >= 50) {
+      items.push({ id: 'rain', tab: 'calendar', lead: h('span', { class: 'glyph-text' }, '🌧'), text: `Rain likely at ${fmtTime(nextClass.start)}`, trail: `${rain}%` });
+    }
+    items.push({ id: 'weather', tab: 'calendar', lead: h('span', { class: 'glyph-text' }, w.glyph), text: `${w.label} · ${w.place}`, trail: `${w.temp}°` });
+  }
+
+  const openTodos = (state.todos || []).filter((t) => !t.done);
+  if (openTodos.length) items.push({ id: 'todo', tab: 'todo', lead: dot(), text: openTodos[0].text, trail: openTodos.length > 1 ? `+${openTodos.length - 1}` : '☐' });
 
   const prs = (state.github && state.github.prs) || [];
   if (prs.length) {
@@ -229,6 +249,15 @@ function renderCompact() {
   $('#compact-lead').replaceChildren(v.lead);
   $('#compact-text').replaceChildren(v.text);
   $('#compact-trail').replaceChildren(v.trail);
+}
+
+function rainChance(w, ms) {
+  if (!w.hourly) return null;
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
+  const i = w.hourly.time.indexOf(key);
+  return i >= 0 ? w.hourly.precipitation_probability[i] : null;
 }
 
 function flash(item, ms = 4000) {
@@ -357,9 +386,45 @@ function renderMedia() {
         h('div', { class: 'track' }, h('i', { style: `width:${(pos / m.duration) * 100}%` })),
         fmtDuration(m.duration),
       ),
+    h('div', { class: 'lyric' }, h('span', { class: 'lyric-now' }), h('span', { class: 'lyric-next' })),
     h('div', { class: 'controls' }, prevBtn, playBtn, nextBtn),
     volumeRow(m),
   );
+  lastLyric = null;
+  tickLyrics();
+}
+
+// ---------- lyrics ----------
+
+let lastLyric = null;
+function lyricIndex(lines, pos) {
+  let ans = -1;
+  for (let i = 0; i < lines.length && lines[i].t <= pos; i++) ans = i;
+  return ans;
+}
+
+function tickLyrics() {
+  const el = $('#media .lyric');
+  if (!el) return;
+  const m = state.media;
+  const l = state.lyrics;
+  const mine = l && m && l.key === `${m.title}|${m.artist}`;
+  let now = '';
+  let next = '';
+  if (mine && l.lines && l.lines.length) {
+    const i = lyricIndex(l.lines, mediaPosition(m) + 0.3);
+    now = i >= 0 ? l.lines[i].text || '♪' : '♪';
+    next = (l.lines[i + 1] && l.lines[i + 1].text) || '';
+  }
+  const key = `${now}|${next}`;
+  if (key === lastLyric) return;
+  lastLyric = key;
+  el.classList.toggle('empty-lyric', !now);
+  el.firstChild.textContent = now;
+  el.lastChild.textContent = next;
+  el.classList.remove('swap');
+  void el.offsetWidth;
+  el.classList.add('swap');
 }
 
 // Scroll anywhere on the music tab to change the volume.
@@ -408,6 +473,21 @@ function renderCalendar() {
   const today = dayKey(now);
   const items = [];
   if (c.status === 'error') items.push(h('div', { class: 'empty small' }, `⚠ ${c.error}`));
+  const w = state.weather;
+  if (w && w.status === 'ok') {
+    const rainHours = (w.hourly.time || [])
+      .map((t, i) => ({ t: new Date(t).getTime(), p: w.hourly.precipitation_probability[i] }))
+      .filter((x) => x.t > now && x.t - now < 12 * 3600e3 && x.p >= 50);
+    items.push(
+      h(
+        'div',
+        { class: 'weather-row' },
+        h('span', { class: 'weather-temp' }, `${w.temp}°`),
+        h('span', { class: 'weather-desc' }, `${w.glyph} ${w.label} · ${w.place}`),
+        h('span', { class: 'side' }, rainHours.length ? `Rain from ${fmtTime(rainHours[0].t)} · ${rainHours[0].p}%` : 'No rain soon'),
+      ),
+    );
+  }
 
   let lastDay = null;
   let focusSet = false;
@@ -476,13 +556,27 @@ function renderClaude() {
     items.push(h('div', { class: 'empty small' }, 'No Claude Code activity yet. Sessions show up here as soon as one starts.'));
   }
   for (const s of sessions) {
+    const a = s.state === 'waiting' && s.approval;
     items.push(
       h(
         'div',
-        { class: 'row' },
+        { class: `row${a ? ' approval' : ''}` },
         dot(s.state),
-        h('div', { class: 'main' }, h('div', { class: 'title' }, s.project), h('div', { class: 'sub' }, s.state === 'working' ? 'Working…' : s.message)),
-        h('span', { class: 'side' }, fmtAgo(s.at)),
+        h(
+          'div',
+          { class: 'main' },
+          h('div', { class: 'title' }, s.project),
+          h('div', { class: 'sub' }, s.state === 'working' ? 'Working…' : s.message),
+          a && a.detail && h('div', { class: 'detail' }, a.detail),
+        ),
+        a
+          ? h(
+              'div',
+              { class: 'decide' },
+              h('button', { class: 'pill-btn ghost', onclick: () => window.island.claudeDecide(a.id, false) }, 'Deny'),
+              h('button', { class: 'pill-btn', onclick: () => window.island.claudeDecide(a.id, true) }, 'Allow'),
+            )
+          : h('span', { class: 'side' }, fmtAgo(s.at)),
       ),
     );
   }
@@ -532,46 +626,20 @@ function renderBadge() {
   const waiting = (state.claude || []).filter((s) => s.state === 'waiting').length;
   const failing = ((state.github && state.github.prs) || []).filter((p) => p.ci === 'fail').length;
   $('#claude-badge').textContent = waiting ? String(waiting) : failing ? '✗' : '';
+  $('#todo-badge').textContent = (state.todos || []).some((t) => !t.done) ? '•' : '';
 }
 
-// ---------- focus timer ----------
+// ---------- focus timer + lockdown ----------
 
-function loadTimer() {
-  try {
-    const t = JSON.parse(localStorage.getItem('island.timer'));
-    return t && t.end > Date.now() ? t : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveTimer() {
-  try {
-    if (state.timer) localStorage.setItem('island.timer', JSON.stringify(state.timer));
-    else localStorage.removeItem('island.timer');
-  } catch {
-    // storage unavailable: the timer just won't survive a restart
-  }
+let lockdownPref = true;
+try {
+  lockdownPref = localStorage.getItem('apron.lockdown') !== '0';
+} catch {
+  // default on
 }
 
 function startTimer(minutes) {
-  state.timer = { end: Date.now() + minutes * 60e3, total: minutes * 60e3 };
-  saveTimer();
-  render();
-}
-
-function addTime(minutes) {
-  if (!state.timer) return startTimer(minutes);
-  state.timer.end += minutes * 60e3;
-  state.timer.total += minutes * 60e3;
-  saveTimer();
-  render();
-}
-
-function stopTimer() {
-  state.timer = null;
-  saveTimer();
-  render();
+  window.island.timer('start', { minutes, lockdown: lockdownPref });
 }
 
 function chime() {
@@ -593,14 +661,13 @@ function chime() {
   }
 }
 
-function checkTimer() {
-  if (state.timer && Date.now() >= state.timer.end) {
-    state.timer = null;
-    saveTimer();
-    state.timerDoneAt = Date.now();
-    chime();
-    render();
-  }
+function lockdownToggle(on, onClick) {
+  return h('button', { class: `lock-toggle${on ? ' on' : ''}`, onclick: onClick, title: 'Close distracting sites while the timer runs' }, h('span', { class: 'lock-dot' }), on ? 'Lockdown on' : 'Lockdown off');
+}
+
+function blockedList() {
+  const sites = (state.settings && state.settings.lockdownSites) || [];
+  return h('div', { class: 'blocked-list', title: 'Edit in config.json → lockdown' }, `Blocks ${sites.slice(0, 6).join(', ')}${sites.length > 6 ? ` +${sites.length - 6}` : ''} · YouTube & Spotify allowed`);
 }
 
 function renderTimer() {
@@ -609,17 +676,32 @@ function renderTimer() {
   if (!t) {
     root.replaceChildren(
       h('div', { class: 'timer-big idle' }, '00:00'),
-      h('div', { class: 'timer-label' }, 'Focus timer'),
       h('div', { class: 'timer-presets' }, ...[5, 15, 25, 50].map((m) => h('button', { class: 'pill-btn ghost', onclick: () => startTimer(m) }, `${m} min`))),
+      lockdownToggle(lockdownPref, () => {
+        lockdownPref = !lockdownPref;
+        try {
+          localStorage.setItem('apron.lockdown', lockdownPref ? '1' : '0');
+        } catch {
+          // fine
+        }
+        renderTimer();
+      }),
+      lockdownPref && blockedList(),
     );
     return;
   }
   const left = Math.max(0, (t.end - Date.now()) / 1000);
   root.replaceChildren(
-    h('div', { class: 'timer-big' }, fmtDuration(left).padStart(5, '0')),
+    h('div', { class: `timer-big${t.lockdown ? ' locked' : ''}` }, fmtDuration(left).padStart(5, '0')),
     h('div', { class: 'track timer-track' }, h('i', { style: `width:${(1 - (left * 1000) / t.total) * 100}%` })),
     h('div', { class: 'timer-label' }, `Ends at ${fmtTime(t.end)}`),
-    h('div', { class: 'timer-presets' }, h('button', { class: 'pill-btn ghost', onclick: () => addTime(1) }, '+1 min'), h('button', { class: 'pill-btn ghost', onclick: () => addTime(5) }, '+5 min'), h('button', { class: 'pill-btn', onclick: stopTimer }, 'Stop')),
+    h(
+      'div',
+      { class: 'timer-presets' },
+      h('button', { class: 'pill-btn ghost', onclick: () => window.island.timer('add', 5) }, '+5 min'),
+      lockdownToggle(t.lockdown, () => window.island.timer('lockdown', !t.lockdown)),
+      h('button', { class: 'pill-btn', onclick: () => window.island.timer('stop') }, 'Stop'),
+    ),
   );
 }
 
@@ -631,6 +713,155 @@ function tickTimer() {
   const bar = $('#timer .timer-track i');
   if (big) big.textContent = fmtDuration(left).padStart(5, '0');
   if (bar) bar.style.width = `${(1 - (left * 1000) / t.total) * 100}%`;
+}
+
+// ---------- to-do ----------
+
+const todoInput = $('#todo-input');
+$('#todo-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  if (todoInput.value.trim()) window.island.todo('add', todoInput.value);
+  todoInput.value = '';
+});
+// The notch window can't take keyboard focus until you click the box.
+let typing = false;
+todoInput.addEventListener('mousedown', () => {
+  typing = true;
+  window.island.setFocus(true);
+});
+todoInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') todoInput.blur();
+});
+todoInput.addEventListener('blur', () => {
+  typing = false;
+  window.island.setFocus(false);
+});
+
+function renderTodo() {
+  const root = $('#todo');
+  const todos = state.todos || [];
+  if (!todos.length) {
+    root.replaceChildren(h('div', { class: 'empty' }, 'Nothing to do. Nice.'));
+    return;
+  }
+  const done = todos.filter((t) => t.done).length;
+  root.replaceChildren(
+    ...todos.map((t) =>
+      h(
+        'div',
+        { class: `row todo-row${t.done ? ' done' : ''}` },
+        h('button', { class: `check${t.done ? ' on' : ''}`, onclick: () => window.island.todo('toggle', t.id), title: t.done ? 'Mark not done' : 'Mark done' }),
+        h('div', { class: 'main' }, h('div', { class: 'title' }, t.text)),
+        h('button', { class: 'x', onclick: () => window.island.todo('remove', t.id), title: 'Delete' }, '×'),
+      ),
+    ),
+    done ? h('button', { class: 'pill-btn ghost clear-done', onclick: () => window.island.todo('clear-done') }, `Clear ${done} done`) : null,
+  );
+}
+
+// ---------- clipboard ----------
+
+function codeCard() {
+  const c = state.code;
+  if (!c || Date.now() - c.at > 10 * 60e3) return null;
+  return h(
+    'div',
+    { class: 'row code-row' },
+    h('div', { class: 'main' }, h('div', { class: 'code' }, c.code), h('div', { class: 'sub' }, `${c.from} code · ${fmtAgo(c.at)}`)),
+    h(
+      'button',
+      {
+        class: 'pill-btn',
+        onclick: () => {
+          window.island.clipboard('copy-code');
+          flash({ id: `codecopied:${Date.now()}`, lead: dot('done'), text: 'Code copied', trail: '✓' }, 1500);
+        },
+      },
+      'Copy',
+    ),
+  );
+}
+
+function renderClip() {
+  const root = $('#clip');
+  const items = state.clipboard || [];
+  if (!items.length) {
+    root.replaceChildren(codeCard() || '', h('div', { class: 'empty' }, 'Copy something and it shows up here. Kept in memory only.'));
+    return;
+  }
+  root.replaceChildren(
+    codeCard() || '',
+    ...items.map((c, i) =>
+      h(
+        'div',
+        {
+          class: 'row clickable',
+          title: 'Copy again',
+          onclick: () => {
+            window.island.clipboard('copy', i);
+            flash({ id: `recopied:${Date.now()}`, lead: dot('done'), text: 'Copied again', trail: '⧉' }, 1500);
+          },
+        },
+        h('div', { class: 'main' }, h('div', { class: 'title clip-text' }, c.secret ? '•••••••••••• (hidden)' : c.text.replace(/\s+/g, ' ').slice(0, 140))),
+        h('span', { class: 'side' }, fmtAgo(c.at)),
+      ),
+    ),
+    h('button', { class: 'pill-btn ghost clear-done', onclick: () => window.island.clipboard('clear') }, 'Clear history'),
+  );
+}
+
+// ---------- events from main (notifications, copies, lockdown, timer) ----------
+
+function onEvent(e) {
+  if (!e || Date.now() - e.at > 5000) return;
+  if (e.type === 'notification' && e.call) {
+    flash(
+      {
+        id: `call:${e.at}`,
+        alert: true,
+        peek: true,
+        lead: h('span', { class: 'app-badge ringing' }, '☎'),
+        text: h('span', { class: 'two' }, h('b', {}, e.title || 'Incoming call'), h('small', {}, 'Calling your phone · answer in Phone Link')),
+        textKey: `call:${e.at}`,
+        trail: '',
+      },
+      20000,
+    );
+  } else if (e.type === 'notification' && e.code) {
+    flash(
+      {
+        id: `code:${e.at}`,
+        peek: true,
+        tab: 'clip',
+        lead: h('span', { class: 'app-badge' }, '#'),
+        text: h('span', { class: 'two' }, h('b', { class: 'code' }, e.code.replace(/^(\d{3})(\d{3})$/, '$1 $2')), h('small', {}, `${e.name} code · hover to copy`)),
+        textKey: `code:${e.at}`,
+        trail: '',
+      },
+      30000,
+    );
+  } else if (e.type === 'notification') {
+    flash(
+      {
+        id: `n:${e.at}`,
+        peek: true,
+        lead: h('span', { class: 'app-badge' }, (e.name || '?').slice(0, 1)),
+        text: h('span', { class: 'two' }, h('b', {}, e.title || e.name), h('small', {}, `${e.name}${e.phone ? ' · phone' : ''}${e.body ? ` · ${e.body}` : ''}`)),
+        textKey: `${e.at}`,
+        trail: '',
+      },
+      6000,
+    );
+  } else if (e.type === 'copied') {
+    flash({ id: `c:${e.at}`, tab: 'clip', lead: h('span', { class: 'glyph-text' }, '⧉'), text: e.secret ? 'Copied · hidden' : e.text.replace(/\s+/g, ' '), trail: 'COPIED' }, 2500);
+  } else if (e.type === 'blocked') {
+    flash({ id: `b:${e.at}`, alert: true, tab: 'timer', lead: dot('waiting'), text: e.text, trail: e.trail }, 3500);
+  } else if (e.type === 'info') {
+    flash({ id: `i:${e.at}`, lead: dot(), text: e.text, trail: e.trail || '' }, 3000);
+  } else if (e.type === 'timer-done') {
+    state.timerDoneAt = e.at;
+    if (isPrimary) chime();
+  }
 }
 
 // ---------- battery ----------
@@ -745,6 +976,7 @@ function expand() {
 }
 
 function collapse() {
+  if (typing) todoInput.blur();
   state.expanded = false;
   islandEl.classList.remove('expanded-state');
   render();
@@ -760,7 +992,7 @@ let collapseTimer = null;
 window.island.onHover((inside) => {
   clearTimeout(collapseTimer);
   if (inside) expand();
-  else if (!pinned && !state.held) collapseTimer = setTimeout(collapse, 300);
+  else if (!pinned && !state.held && !typing) collapseTimer = setTimeout(collapse, 300);
 });
 
 window.island.onToggle(() => {
@@ -779,6 +1011,8 @@ function render() {
   if (state.tab === 'calendar') renderCalendar();
   if (state.tab === 'claude') renderClaude();
   if (state.tab === 'timer') renderTimer();
+  if (state.tab === 'todo') renderTodo();
+  if (state.tab === 'clip') renderClip();
 }
 
 function mediaShape(m) {
@@ -813,6 +1047,22 @@ window.island.onUpdate((key, value) => {
     state.tab = 'claude';
   }
   if (key === 'media') onMedia(value);
+  if (key === 'event') {
+    state.event = value;
+    onEvent(value);
+    renderCompact();
+    if (value && value.type === 'timer-done') render();
+    return;
+  }
+  if (key === 'lyrics') {
+    state.lyrics = value;
+    if (state.expanded && state.tab === 'media') tickLyrics();
+    return;
+  }
+  if (key === 'clipboard' && !(state.expanded && state.tab === 'clip')) {
+    state.clipboard = value;
+    return;
+  }
   // Position/volume ticks mustn't rebuild the music tab: a rebuild between mousedown
   // and mouseup swallows the click on play/pause.
   const sameShape = key === 'media' && state.media && value && mediaShape(value) === mediaShape(state.media);
@@ -823,6 +1073,7 @@ window.island.onUpdate((key, value) => {
     if (state.expanded && state.tab === 'media') {
       tickMedia();
       updateVolume();
+      tickLyrics();
     }
     renderCompact();
     return;
@@ -842,10 +1093,13 @@ window.island.getState().then((s) => {
 let ticks = 0;
 setInterval(() => {
   ticks++;
-  checkTimer();
-  if (ticks % 60 === 0) return render();
+  // Keep the to-do box alive while typing.
+  if (ticks % 60 === 0 && !typing) return render();
   renderCompact();
   $('#clock').textContent = fmtTime(Date.now());
-  if (state.expanded && state.tab === 'media') tickMedia();
+  if (state.expanded && state.tab === 'media') {
+    tickMedia();
+    tickLyrics();
+  }
   if (state.expanded && state.tab === 'timer') tickTimer();
 }, 1000);

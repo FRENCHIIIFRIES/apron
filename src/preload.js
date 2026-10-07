@@ -12,4 +12,9 @@ contextBridge.exposeInMainWorld('island', {
   setAccent: (hex) => ipcRenderer.send('island:accent', hex),
   setArtColor: (on) => ipcRenderer.send('island:art-color', Boolean(on)),
   installUpdate: () => ipcRenderer.send('island:install-update'),
+  setFocus: (on) => ipcRenderer.send('island:focus', Boolean(on)),
+  claudeDecide: (id, allow) => ipcRenderer.send('island:claude-decide', String(id), Boolean(allow)),
+  todo: (op, arg) => ipcRenderer.send('island:todo', op, arg),
+  timer: (op, arg) => ipcRenderer.send('island:timer', op, arg),
+  clipboard: (op, arg) => ipcRenderer.send('island:clipboard', op, arg),
 });

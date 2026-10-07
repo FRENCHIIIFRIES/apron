@@ -26,6 +26,11 @@ const DEFAULTS = {
   accent: '#d71921',
   startWithWindows: true,
   artColor: false,
+  displays: 'all', // 'all' screens or 'primary'
+  weatherCity: '', // e.g. "Hyderabad, IN"
+  notifications: true,
+  clipboard: true,
+  lockdown: {}, // { extraSites: [], allowSites: [], unblock: [], apps: [] }
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;

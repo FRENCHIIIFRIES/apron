@@ -2,17 +2,26 @@ const IcalExpander = require('ical-expander');
 
 const JOIN_RE = /https:\/\/(?:meet\.google\.com|[\w.-]*zoom\.us|teams\.microsoft\.com|teams\.live\.com)\/[^\s"'<>)\\]+/i;
 
+// Google sometimes stores titles HTML-escaped ("I&amp;S").
+const decode = (t) =>
+  String(t || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+
 function toItem(ev, startDate, endDate, calendar) {
   const text = `${ev.location || ''} ${ev.description || ''}`;
   const join = text.match(JOIN_RE);
   const start = startDate.toJSDate().getTime();
   return {
     id: `${ev.uid}|${start}`,
-    title: ev.summary || '(no title)',
+    title: decode(ev.summary) || '(no title)',
     start,
     end: endDate ? endDate.toJSDate().getTime() : start,
     allDay: Boolean(startDate.isDate),
-    location: ev.location || '',
+    location: decode(ev.location),
     joinUrl: join ? join[0] : null,
     calendar,
   };

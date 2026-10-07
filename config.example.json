@@ -6,5 +6,16 @@
   "offsetY": 0,
   "claudePort": 47777,
   "calendarRefreshMinutes": 5,
-  "githubRefreshSeconds": 60
+  "githubRefreshSeconds": 60,
+  "weatherCity": "",
+  "displays": "all",
+  "notifications": true,
+  "clipboard": true,
+  "artColor": false,
+  "lockdown": {
+    "extraSites": [],
+    "allowSites": [],
+    "unblock": [],
+    "apps": []
+  }
 }

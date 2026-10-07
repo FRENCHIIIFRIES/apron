@@ -29,7 +29,8 @@ const isOurs = (group) => (group.hooks || []).some((h) => MARKERS.some((m) => St
 
 for (const event of EVENTS) {
   const groups = (settings.hooks[event] || []).filter((g) => !isOurs(g));
-  if (!uninstall) groups.push({ hooks: [{ type: 'command', command, timeout: 5 }] });
+  // PermissionRequest waits for Allow/Deny from the notch; everything else is fire-and-forget.
+  if (!uninstall) groups.push({ hooks: [{ type: 'command', command, timeout: event === 'PermissionRequest' ? 120 : 5 }] });
   if (groups.length) settings.hooks[event] = groups;
   else delete settings.hooks[event];
 }

@@ -2,7 +2,8 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const COMMANDS = new Set(['toggle', 'next', 'prev', 'volup', 'voldown', 'mute']);
+const COMMANDS = new Set(['toggle', 'next', 'prev', 'volup', 'voldown', 'mute', 'watch on', 'watch off']);
+const COMMAND_RE = /^(vol (100|[1-9]?\d)|(closetab|minimize) \d+)$/;
 const SOURCE = path.join(__dirname, 'media', 'IslandMedia.cs');
 const BINARY = path.join(__dirname, '..', 'bin', 'apron-media.exe');
 
@@ -29,7 +30,8 @@ function ensureBinary() {
   return BINARY;
 }
 
-function start(onUpdate) {
+/** onUpdate(mediaStatus); onForeground({hwnd, exe, title}) while `watch on`. */
+function start(onUpdate, onForeground = () => {}) {
   let proc = null;
   let stopped = false;
 
@@ -55,7 +57,9 @@ function start(onUpdate) {
         buf = buf.slice(i + 1);
         if (!line) continue;
         try {
-          onUpdate({ status: 'ok', ...JSON.parse(line) });
+          const msg = JSON.parse(line);
+          if (msg.fg) onForeground(msg.fg);
+          else onUpdate({ status: 'ok', ...msg });
         } catch {
           // ignore a malformed line
         }
@@ -71,7 +75,7 @@ function start(onUpdate) {
   launch();
   return {
     command(cmd) {
-      const ok = COMMANDS.has(cmd) || /^vol (100|[1-9]?\d)$/.test(cmd);
+      const ok = COMMANDS.has(cmd) || COMMAND_RE.test(cmd);
       if (ok && proc && proc.stdin.writable) proc.stdin.write(`${cmd}\n`);
     },
     stop() {

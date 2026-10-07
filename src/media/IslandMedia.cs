@@ -1,5 +1,6 @@
 // Media bridge for the island, built with the .NET Framework csc that ships with Windows.
 // stdin:  one command per line: toggle | next | prev | volup | voldown | mute | vol <0-100>
+//         watch on|off | closetab <hwnd> | minimize <hwnd>   (focus lockdown)
 // stdout: the current media session + system volume as one JSON line, whenever it changes.
 using System;
 using System.Globalization;
@@ -50,8 +51,7 @@ static class IslandMedia
                 var json = Status();
                 if (json != last)
                 {
-                    stdout.WriteLine(json);
-                    stdout.Flush();
+                    Emit(json);
                     last = json;
                 }
             }
@@ -72,6 +72,7 @@ static class IslandMedia
             {
                 var cmd = line.Trim();
                 if (Volume.Handle(cmd)) { wake.Set(); continue; }
+                if (Foreground.Handle(cmd)) continue;
                 var s = Pick();
                 if (s == null) continue;
                 lock (pickLock) lastCommand = DateTime.UtcNow;
@@ -123,6 +124,23 @@ static class IslandMedia
             if (chosen != null) pinned = chosen.SourceAppUserModelId;
             return chosen;
         }
+    }
+
+    static readonly object writeLock = new object();
+    public static void Emit(string line)
+    {
+        lock (writeLock)
+        {
+            stdout.WriteLine(line);
+            stdout.Flush();
+        }
+    }
+
+    public static string Str(string value)
+    {
+        var sb = new StringBuilder();
+        Prop(sb, "x", value);
+        return sb.ToString().Substring(5); // drop the leading ,"x":
     }
 
     static string Status()
@@ -307,6 +325,83 @@ static class Volume
         catch
         {
             return "";
+        }
+    }
+}
+
+// Focus lockdown support: reports the foreground window (title + exe) while watching,
+// and can close the active browser tab (Ctrl+W) or minimise a window. The decision of
+// what counts as distracting lives in lockdown.js.
+static class Foreground
+{
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int cmd);
+    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+
+    static volatile bool watching;
+    static Thread thread;
+
+    public static bool Handle(string cmd)
+    {
+        if (cmd == "watch on")
+        {
+            watching = true;
+            if (thread == null || !thread.IsAlive)
+            {
+                thread = new Thread(Loop) { IsBackground = true };
+                thread.Start();
+            }
+            return true;
+        }
+        if (cmd == "watch off") { watching = false; return true; }
+        if (cmd.StartsWith("closetab ") || cmd.StartsWith("minimize "))
+        {
+            long h;
+            if (!long.TryParse(cmd.Substring(9), out h)) return true;
+            var hwnd = new IntPtr(h);
+            // Only act if that window is still in front, so we never hit the wrong one.
+            if (GetForegroundWindow() != hwnd) return true;
+            if (cmd.StartsWith("minimize "))
+            {
+                // Ask the window to minimise itself (works for more apps than ShowWindow).
+                PostMessage(hwnd, 0x0112 /* WM_SYSCOMMAND */, new IntPtr(0xF020) /* SC_MINIMIZE */, IntPtr.Zero);
+                ShowWindow(hwnd, 6 /* SW_MINIMIZE */);
+            }
+            else
+            {
+                const uint UP = 2;
+                keybd_event(0x11, 0, 0, UIntPtr.Zero); // Ctrl
+                keybd_event(0x57, 0, 0, UIntPtr.Zero); // W
+                keybd_event(0x57, 0, UP, UIntPtr.Zero);
+                keybd_event(0x11, 0, UP, UIntPtr.Zero);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    static void Loop()
+    {
+        string last = null;
+        while (watching)
+        {
+            try
+            {
+                var hwnd = GetForegroundWindow();
+                var sb = new StringBuilder(512);
+                GetWindowText(hwnd, sb, sb.Capacity);
+                uint pid;
+                GetWindowThreadProcessId(hwnd, out pid);
+                string exe = "";
+                try { exe = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { }
+                var line = "{\"fg\":{\"hwnd\":\"" + hwnd.ToInt64() + "\",\"exe\":" + IslandMedia.Str(exe) + ",\"title\":" + IslandMedia.Str(sb.ToString()) + "}}";
+                if (line != last) { IslandMedia.Emit(line); last = line; }
+            }
+            catch { }
+            Thread.Sleep(400);
         }
     }
 }
