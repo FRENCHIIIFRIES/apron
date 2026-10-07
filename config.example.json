@@ -1,0 +1,10 @@
+{
+  "icalUrls": [],
+  "accent": "#d71921",
+  "startWithWindows": true,
+  "display": "primary",
+  "offsetY": 0,
+  "claudePort": 47777,
+  "calendarRefreshMinutes": 5,
+  "githubRefreshSeconds": 60
+}

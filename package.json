@@ -1,0 +1,22 @@
+{
+  "name": "island",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Dynamic Island for Windows: calendar, media controls and Claude Code status.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "hooks:install": "node scripts/install-hooks.js",
+    "hooks:preview": "node scripts/install-hooks.js --dry-run",
+    "hooks:uninstall": "node scripts/install-hooks.js --uninstall"
+  },
+  "dependencies": {
+    "@fontsource/doto": "^5.3.0",
+    "@fontsource/space-mono": "^5.3.0",
+    "ical-expander": "^3.2.0"
+  },
+  "devDependencies": {
+    "electron": "^44.6.0"
+  }
+}
