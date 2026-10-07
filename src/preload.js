@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('island', {
   setArtColor: (on) => ipcRenderer.send('island:art-color', Boolean(on)),
   installUpdate: () => ipcRenderer.send('island:install-update'),
   setFocus: (on) => ipcRenderer.send('island:focus', Boolean(on)),
+  openSettings: () => ipcRenderer.send('island:open-settings'),
   claudeDecide: (id, allow) => ipcRenderer.send('island:claude-decide', String(id), Boolean(allow)),
   todo: (op, arg) => ipcRenderer.send('island:todo', op, arg),
   timer: (op, arg) => ipcRenderer.send('island:timer', op, arg),

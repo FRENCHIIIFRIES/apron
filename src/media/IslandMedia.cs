@@ -106,23 +106,40 @@ static class IslandMedia
         return s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
     }
 
+    static bool IsBrowser(string id)
+    {
+        var lower = (id ?? "").ToLowerInvariant();
+        foreach (var b in new[] { "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc" })
+            if (lower.Contains(b)) return true;
+        return false;
+    }
+
     static GlobalSystemMediaTransportControlsSession Pick()
     {
         lock (pickLock)
         {
             var current = manager.GetCurrentSession();
+            string currentId = current != null ? current.SourceAppUserModelId : null;
             GlobalSystemMediaTransportControlsSession pin = null;
-            GlobalSystemMediaTransportControlsSession playing = current != null && IsPlaying(current) ? current : null;
+            GlobalSystemMediaTransportControlsSession best = null;
+            int bestScore = -1;
             foreach (var s in manager.GetSessions())
             {
-                if (s.SourceAppUserModelId == pinned) pin = s;
-                if (playing == null && IsPlaying(s)) playing = s;
+                var id = s.SourceAppUserModelId;
+                if (id == pinned) pin = s;
+                if (!IsPlaying(s)) continue;
+                // Real music apps beat browser tabs (Instagram reels loop forever and
+                // count as "playing"); then prefer what Windows considers current.
+                int score = (IsBrowser(id) ? 0 : 2) + (id == currentId ? 1 : 0);
+                if (score > bestScore) { best = s; bestScore = score; }
             }
+            // Right after you press a control, stay on that app even if another starts.
             bool recentCommand = (DateTime.UtcNow - lastCommand).TotalSeconds < 60;
-            if (pin != null && (IsPlaying(pin) || recentCommand || playing == null)) return pin;
-            var chosen = playing ?? current;
-            if (chosen != null) pinned = chosen.SourceAppUserModelId;
-            return chosen;
+            if (pin != null && recentCommand) return pin;
+            if (best != null) { pinned = best.SourceAppUserModelId; return best; }
+            if (pin != null) return pin;
+            if (current != null) pinned = currentId;
+            return current;
         }
     }
 

@@ -73,7 +73,9 @@ function list(sessions) {
   return Object.values(sessions).sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.at - a.at);
 }
 
-function start(port, onUpdate) {
+/** opts.approvals(): whether to hold permission requests for Allow/Deny in the notch. */
+function start(port, onUpdate, opts = {}) {
+  const approvalsOn = opts.approvals || (() => true);
   let sessions = {};
   // PermissionRequest hooks hold their HTTP request open until you pick Allow/Deny
   // in the notch, you answer in the terminal (any later event for that session),
@@ -135,7 +137,7 @@ function start(port, onUpdate) {
         sessions = next;
         onUpdate(list(sessions));
       }
-      const wantsDecision = event === 'PermissionRequest' && req.headers['x-apron-wait'] === '1' && sessions[payload.session_id];
+      const wantsDecision = event === 'PermissionRequest' && req.headers['x-apron-wait'] === '1' && approvalsOn() && sessions[payload.session_id];
       if (!wantsDecision) {
         res.writeHead(204);
         res.end();

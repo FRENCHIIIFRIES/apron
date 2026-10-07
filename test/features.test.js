@@ -81,3 +81,11 @@ test('phone extras: one-time codes and incoming calls', () => {
   assert.strictEqual(isCall('Microsoft.YourPhone_8wekyb3d8bbwe!App', 'Mom', 'Incoming call'), true);
   assert.strictEqual(isCall('Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.whatsapp', 'Mom', 'Incoming voice call'), false);
 });
+
+test('settings: only known keys with sane values get through', () => {
+  const { sanitize } = require('../src/settingsSchema');
+  assert.deepStrictEqual(sanitize({ accent: '#ABCDEF', offsetY: 999, rotateSeconds: '4', evil: 1, lyrics: 'yes', units: 'k' }), { accent: '#abcdef', offsetY: 60, rotateSeconds: 4 });
+  assert.deepStrictEqual(sanitize({ icalUrls: ['https://a.ics', 'http://b.ics', 'javascript:x', 'https://a.ics'] }), { icalUrls: ['https://a.ics'] });
+  const ld = sanitize({ lockdown: { extraSites: [' chess.com ', ''], apps: ['Steam.exe', 'rm -rf /;'], other: 1 } }).lockdown;
+  assert.deepStrictEqual(ld, { extraSites: ['chess.com'], allowSites: [], unblock: [], apps: ['Steam.exe'] });
+});

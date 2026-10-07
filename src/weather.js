@@ -59,7 +59,7 @@ function start(config, onUpdate) {
         placeFor = config.weatherCity;
       }
       const f = await getJson(
-        `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}&current=temperature_2m,weather_code,is_day&hourly=precipitation_probability&forecast_days=2&timezone=auto`,
+        `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}&current=temperature_2m,weather_code,is_day&hourly=precipitation_probability&forecast_days=2&timezone=auto${config.units === 'f' ? '&temperature_unit=fahrenheit' : ''}`,
       );
       onUpdate({
         status: 'ok',

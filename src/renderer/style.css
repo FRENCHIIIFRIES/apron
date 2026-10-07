@@ -643,3 +643,6 @@ button {
 
 /* rows clip their progress fill, so they must never be squeezed by the list */
 .list > * { flex-shrink: 0; }
+
+.gear { flex: none; margin-left: 6px; color: var(--muted); font-size: 14px; line-height: 1; }
+.gear:hover { color: var(--fg); }

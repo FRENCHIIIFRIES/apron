@@ -13,18 +13,28 @@ const lockdown = require('./lockdown');
 const { todoStore, timerStore, clipboardWatcher } = require('./stores');
 const { pillPng } = require('./icon');
 const updater = require('./updater');
+const hooksInstall = require('./hooksInstall');
+const { sanitize } = require('./settingsSchema');
 
 const WIN_W = 480;
 const WIN_H = 320;
 
 let tray = null;
+let settingsWin = null;
 let config = loadConfig();
+// What's currently in effect, so a config change (from Settings or the file) only
+// restarts the parts that actually changed.
+let applied = JSON.parse(JSON.stringify(config));
 
 function settingsPayload() {
   return {
     accent: config.accent,
     artColor: Boolean(config.artColor),
     lockdownSites: lockdown.compile(config).block.map((b) => b.label),
+    lockdownDefault: config.lockdownDefault !== false,
+    rotateSeconds: config.rotateSeconds,
+    lyrics: config.lyrics !== false,
+    peek: config.peek !== false,
   };
 }
 
@@ -192,10 +202,26 @@ function applyLoginItem() {
 }
 
 function setConfig(patch) {
-  Object.assign(config, patch);
   saveConfig(patch);
+  applyConfig(loadConfig());
+}
+
+/** Make `next` the live config, restarting only what changed. */
+function applyConfig(next) {
+  const prev = applied;
+  config = next;
+  applied = JSON.parse(JSON.stringify(next));
+  const changed = (...keys) => keys.some((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]));
+  if (changed('icalUrls', 'calendarRefreshMinutes', 'githubRefreshSeconds', 'weatherCity', 'units')) {
+    stopSources();
+    startSources();
+  }
+  if (sources.lockdown) sources.lockdown.setConfig(config);
+  if (changed('startWithWindows')) applyLoginItem();
+  if (changed('displays', 'display', 'offsetY')) syncNotches();
   update('settings', settingsPayload());
   rebuildTray();
+  sendSettings();
 }
 
 // ---------- tray ----------
@@ -215,6 +241,7 @@ function rebuildTray() {
       { label: `Apron ${app.getVersion()}`, enabled: false },
       updateMenuItem(),
       { type: 'separator' },
+      { label: 'Settings…', click: openSettings },
       { label: 'Refresh', click: () => Object.values(sources).forEach((s) => s.refresh && s.refresh()) },
       {
         label: 'Accent colour',
@@ -225,10 +252,7 @@ function rebuildTray() {
         label: 'Show on all screens',
         type: 'checkbox',
         checked: config.displays === 'all',
-        click: (i) => {
-          setConfig({ displays: i.checked ? 'all' : 'primary' });
-          syncNotches();
-        },
+        click: (i) => setConfig({ displays: i.checked ? 'all' : 'primary' }),
       },
       { label: 'Phone & app notifications', type: 'checkbox', checked: config.notifications !== false, click: (i) => setConfig({ notifications: i.checked }) },
       { label: 'Clipboard peeks', type: 'checkbox', checked: config.clipboard !== false, click: (i) => setConfig({ clipboard: i.checked }) },
@@ -237,10 +261,7 @@ function rebuildTray() {
         label: 'Start with Windows',
         type: 'checkbox',
         checked: Boolean(config.startWithWindows),
-        click: (i) => {
-          setConfig({ startWithWindows: i.checked });
-          applyLoginItem();
-        },
+        click: (i) => setConfig({ startWithWindows: i.checked }),
       },
       { type: 'separator' },
       { label: 'Quit', click: () => app.quit() },
@@ -251,7 +272,66 @@ function rebuildTray() {
 function buildTray() {
   tray = new Tray(nativeImage.createFromBuffer(pillPng(32), { scaleFactor: 2 }));
   tray.setToolTip('Apron');
+  tray.on('click', openSettings);
   rebuildTray();
+}
+
+// ---------- settings window ----------
+
+function settingsSnapshot() {
+  return {
+    config: { ...config },
+    version: app.getVersion(),
+    configPath: CONFIG_PATH,
+    builtInSites: lockdown.DEFAULT_BLOCK.map(([label]) => label),
+    hooksInstalled: hooksInstall.status(),
+    update: state.update,
+  };
+}
+
+function sendSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('settings:changed', settingsSnapshot());
+}
+
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  settingsWin = new BrowserWindow({
+    width: 560,
+    height: 760,
+    minWidth: 460,
+    minHeight: 500,
+    title: 'Apron Settings',
+    backgroundColor: '#000000',
+    autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 40 },
+    icon: nativeImage.createFromBuffer(pillPng(64)),
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'settings', 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  settingsWin.loadFile(path.join(__dirname, 'settings', 'index.html'));
+  settingsWin.once('ready-to-show', () => {
+    settingsWin.show();
+    // APRON_SETTINGS_SHOT=<file.png> saves a screenshot of the window (for docs/debugging).
+    if (process.env.APRON_SETTINGS_SHOT) {
+      setTimeout(async () => {
+        const img = await settingsWin.webContents.capturePage();
+        fs.writeFileSync(process.env.APRON_SETTINGS_SHOT, img.toPNG());
+      }, 1500);
+    }
+  });
+  settingsWin.on('closed', () => {
+    settingsWin = null;
+  });
 }
 
 // Claude Code hooks point at a copy of the hook script in %APPDATA%\Apron, so they keep
@@ -267,25 +347,12 @@ function syncHookScript() {
   }
 }
 
+// Hand edits to config.json apply live too.
 function watchConfig() {
   let timer = null;
   fs.watchFile(CONFIG_PATH, { interval: 1000 }, () => {
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      const prev = config;
-      config = loadConfig();
-      // Only refetch when a source setting changed (not for e.g. an accent change).
-      const sourceKeys = ['icalUrls', 'calendarRefreshMinutes', 'githubRefreshSeconds', 'weatherCity'];
-      if (sourceKeys.some((k) => JSON.stringify(prev[k]) !== JSON.stringify(config[k]))) {
-        stopSources();
-        startSources();
-      }
-      sources.lockdown.setConfig(config);
-      update('settings', settingsPayload());
-      if (prev.startWithWindows !== config.startWithWindows) applyLoginItem();
-      rebuildTray();
-      syncNotches();
-    }, 300);
+    timer = setTimeout(() => applyConfig(loadConfig()), 300);
   });
 }
 
@@ -335,6 +402,35 @@ ipcMain.on('island:timer', (_e, op, arg) => {
   else if (op === 'lockdown') t.setLockdown(arg === true);
   else if (op === 'stop') t.stop();
 });
+ipcMain.on('island:open-settings', () => openSettings());
+
+// From the Settings window.
+ipcMain.handle('settings:get', () => settingsSnapshot());
+ipcMain.handle('settings:set', (_e, patch) => {
+  const clean = sanitize(patch);
+  if (Object.keys(clean).length) setConfig(clean);
+  return settingsSnapshot();
+});
+ipcMain.handle('settings:action', (_e, action) => {
+  if (action === 'check-update') sources.updater.check();
+  else if (action === 'install-update') sources.updater.install();
+  else if (action === 'open-config') shell.openPath(CONFIG_PATH);
+  else if (action === 'connect-claude') {
+    try {
+      hooksInstall.run();
+    } catch (err) {
+      return { ok: false, error: err.message, ...settingsSnapshot() };
+    }
+  } else if (action === 'disconnect-claude') {
+    try {
+      hooksInstall.run({ uninstall: true });
+    } catch (err) {
+      return { ok: false, error: err.message, ...settingsSnapshot() };
+    }
+  } else if (action === 'quit') app.quit();
+  return { ok: true, ...settingsSnapshot() };
+});
+
 ipcMain.on('island:clipboard', (_e, op, arg) => {
   if (op === 'copy-code' && state.code) Promise.resolve(clipboard.writeText(state.code.code)).catch(() => {});
   if (op === 'copy') stores.clipboard.copy(Number(arg));
@@ -351,6 +447,7 @@ app.whenReady().then(() => {
   trackHover();
 
   // Ctrl+Alt+Space holds the notch on the screen you're on open (and closes it again).
+  if (process.env.APRON_SETTINGS) openSettings();
   globalShortcut.register('Control+Alt+Space', () => {
     const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const n = notches.get(d.id) || notches.values().next().value;
@@ -366,7 +463,7 @@ app.whenReady().then(() => {
     (fg) => sources.lockdown.onForeground(fg),
   );
   sources.lockdown = lockdown.create(config, sources.media, (label) => emit({ type: 'blocked', text: `${label} is blocked`, trail: 'FOCUS' }));
-  sources.claude = claude.start(config.claudePort, (v) => update('claude', v));
+  sources.claude = claude.start(config.claudePort, (v) => update('claude', v), { approvals: () => config.claudeApprovals !== false });
   sources.notifications = notifications.start(config, (n) => {
     // Distracting apps stay quiet during a locked-down focus session.
     if (state.timer && state.timer.lockdown && lockdown.judge({ exe: 'chrome', title: n.name }, lockdown.compile(config))) return;
@@ -395,6 +492,7 @@ app.whenReady().then(() => {
   sources.updater = updater.start((v) => {
     update('update', v);
     rebuildTray();
+    sendSettings();
   });
   watchConfig();
   screen.on('display-metrics-changed', syncNotches);

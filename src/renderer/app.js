@@ -3,7 +3,7 @@ const islandEl = $('#island');
 
 const SOON = 10 * 60e3;
 const DONE_FLASH = 10e3;
-const ROTATE_MS = 6000;
+const rotateMs = () => ((state.settings && state.settings.rotateSeconds) || 6) * 1000;
 const PEEK_MS = 4000;
 const TIMER_DONE_FLASH = 12e3;
 
@@ -168,14 +168,14 @@ function compactView() {
       text: m.artist ? `${m.title} · ${m.artist}` : m.title,
       trail: h('span', { class: 'bars' }, h('i'), h('i'), h('i')),
     };
-    if (soon && Math.floor(now / ROTATE_MS) % 2) {
+    if (soon && Math.floor(now / rotateMs()) % 2) {
       return { id: 'soon', tab: 'calendar', lead: calLead(), text: soon.title, trail: fmtUntil(soon.start) };
     }
     return music;
   }
 
   const items = rotationItems(now, events, soon);
-  return items[Math.floor(now / ROTATE_MS) % items.length];
+  return items[Math.floor(now / rotateMs()) % items.length];
 }
 
 function rotationItems(now, events, soon) {
@@ -386,7 +386,7 @@ function renderMedia() {
         h('div', { class: 'track' }, h('i', { style: `width:${(pos / m.duration) * 100}%` })),
         fmtDuration(m.duration),
       ),
-    h('div', { class: 'lyric' }, h('span', { class: 'lyric-now' }), h('span', { class: 'lyric-next' })),
+    (!state.settings || state.settings.lyrics !== false) && h('div', { class: 'lyric' }, h('span', { class: 'lyric-now' }), h('span', { class: 'lyric-next' })),
     h('div', { class: 'controls' }, prevBtn, playBtn, nextBtn),
     volumeRow(m),
   );
@@ -631,15 +631,12 @@ function renderBadge() {
 
 // ---------- focus timer + lockdown ----------
 
-let lockdownPref = true;
-try {
-  lockdownPref = localStorage.getItem('apron.lockdown') !== '0';
-} catch {
-  // default on
-}
+// Starts from the "Lockdown on by default" setting; the switch here overrides it per session.
+let lockdownPref = null;
+const lockdownOn = () => (lockdownPref === null ? !state.settings || state.settings.lockdownDefault !== false : lockdownPref);
 
 function startTimer(minutes) {
-  window.island.timer('start', { minutes, lockdown: lockdownPref });
+  window.island.timer('start', { minutes, lockdown: lockdownOn() });
 }
 
 function chime() {
@@ -677,16 +674,11 @@ function renderTimer() {
     root.replaceChildren(
       h('div', { class: 'timer-big idle' }, '00:00'),
       h('div', { class: 'timer-presets' }, ...[5, 15, 25, 50].map((m) => h('button', { class: 'pill-btn ghost', onclick: () => startTimer(m) }, `${m} min`))),
-      lockdownToggle(lockdownPref, () => {
-        lockdownPref = !lockdownPref;
-        try {
-          localStorage.setItem('apron.lockdown', lockdownPref ? '1' : '0');
-        } catch {
-          // fine
-        }
+      lockdownToggle(lockdownOn(), () => {
+        lockdownPref = !lockdownOn();
         renderTimer();
       }),
-      lockdownPref && blockedList(),
+      lockdownOn() && blockedList(),
     );
     return;
   }
@@ -911,6 +903,7 @@ for (const color of PRESETS) {
 customInput.addEventListener('input', () => applyAccent(customInput.value));
 customInput.addEventListener('change', () => pickAccent(customInput.value));
 $('#swatch-toggle').addEventListener('click', () => swatchesEl.classList.toggle('open'));
+$('#gear').addEventListener('click', () => window.island.openSettings());
 
 // Album art: Nothing-style black & white, or its real colours.
 const artToggle = $('#art-toggle');
@@ -1034,7 +1027,8 @@ function onMedia(m) {
   const key = m && m.active ? `${m.title}|${m.artist}` : '';
   const prevKey = prev && prev.active ? `${prev.title}|${prev.artist}` : '';
   // Peek on a new song (not on first load, and not while the island is open).
-  if (prev && key && key !== prevKey && m.playing && !state.expanded) state.peekUntil = Date.now() + PEEK_MS;
+  const peekOn = !state.settings || state.settings.peek !== false;
+  if (peekOn && prev && key && key !== prevKey && m.playing && !state.expanded) state.peekUntil = Date.now() + PEEK_MS;
   const art = (m && m.art) || '';
   if (art !== artKey) {
     artKey = art;

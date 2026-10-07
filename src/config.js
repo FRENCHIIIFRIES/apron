@@ -31,6 +31,12 @@ const DEFAULTS = {
   notifications: true,
   clipboard: true,
   lockdown: {}, // { extraSites: [], allowSites: [], unblock: [], apps: [] }
+  lockdownDefault: true, // lockdown switched on when you start a focus timer
+  rotateSeconds: 6, // how long each item shows in the closed notch
+  lyrics: true,
+  peek: true, // widen the notch briefly when the song changes
+  units: 'c', // 'c' or 'f'
+  claudeApprovals: true, // Allow/Deny permission requests from the notch
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
