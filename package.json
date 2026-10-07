@@ -62,7 +62,8 @@
       {
         "provider": "github",
         "owner": "FRENCHIIIFRIES",
-        "repo": "apron"
+        "repo": "apron",
+        "releaseType": "release"
       }
     ]
   },
