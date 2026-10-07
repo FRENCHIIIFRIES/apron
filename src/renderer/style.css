@@ -523,3 +523,7 @@ button {
 }
 .art-toggle:hover { color: var(--fg); }
 .art-toggle.on { color: var(--fg); box-shadow: inset 0 0 0 1px var(--art); }
+
+.update-btn { margin-left: auto; animation: blink 1.6s steps(2, jump-none) infinite; }
+.update-btn[hidden] { display: none; }
+.update-btn:not([hidden]) + .clock { margin-left: 8px; }

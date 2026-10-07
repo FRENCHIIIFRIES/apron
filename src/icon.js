@@ -1,4 +1,4 @@
-// Draws the tray icon (a small white pill) as a PNG in memory, so the repo needs no binary assets.
+// Draws Apron's icon (a small white pill) as a PNG in memory, so the repo needs no binary assets.
 const zlib = require('zlib');
 
 function crc32(buf) {

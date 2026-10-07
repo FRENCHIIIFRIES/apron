@@ -7,6 +7,7 @@ const media = require('./media');
 const claude = require('./claude');
 const github = require('./github');
 const { pillPng } = require('./icon');
+const updater = require('./updater');
 
 const WIN_W = 480;
 const WIN_H = 320;
@@ -18,7 +19,7 @@ function settingsPayload() {
   return { accent: config.accent, artColor: Boolean(config.artColor) };
 }
 
-const state = { calendar: null, media: null, claude: [], github: null, settings: settingsPayload() };
+const state = { calendar: null, media: null, claude: [], github: null, update: null, settings: settingsPayload() };
 
 const ACCENTS = [
   ['Nothing red', '#d71921'],
@@ -68,8 +69,8 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setIgnoreMouseEvents(true, { forward: true });
-  // ISLAND_EXPAND=media|calendar|claude pins the island open on that tab (for screenshots/debugging).
-  const query = process.env.ISLAND_EXPAND ? { expand: process.env.ISLAND_EXPAND } : {};
+  // APRON_EXPAND=media|calendar|claude|timer pins Apron open on that tab (for screenshots/debugging).
+  const query = process.env.APRON_EXPAND ? { expand: process.env.APRON_EXPAND } : {};
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query });
   win.once('ready-to-show', () => {
     place();
@@ -90,7 +91,7 @@ function stopSources() {
 
 function loginItemOptions() {
   // In dev we run electron.exe with the app folder as an argument.
-  const base = { name: 'Island' };
+  const base = { name: 'Apron' };
   return app.isPackaged ? base : { ...base, path: process.execPath, args: [app.getAppPath()] };
 }
 
@@ -117,6 +118,9 @@ function rebuildTray() {
   if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      { label: `Apron ${app.getVersion()}`, enabled: false },
+      updateMenuItem(),
+      { type: 'separator' },
       { label: 'Refresh', click: () => Object.values(sources).forEach((s) => s.refresh && s.refresh()) },
       {
         label: 'Accent colour',
@@ -150,9 +154,30 @@ function rebuildTray() {
   );
 }
 
+function updateMenuItem() {
+  const u = state.update || {};
+  if (u.status === 'ready') return { label: `Restart to update to ${u.next}`, click: () => sources.updater.install() };
+  if (u.status === 'downloading') return { label: `Downloading ${u.next || 'update'}… ${u.percent || 0}%`, enabled: false };
+  if (u.status === 'dev') return { label: 'Updates: off in dev mode', enabled: false };
+  return { label: u.status === 'checking' ? 'Checking for updates…' : 'Check for updates', click: () => sources.updater.check() };
+}
+
+// Claude Code hooks point at a copy of the hook script in %APPDATA%\Apron, so they keep
+// working wherever the app (or this repo) lives. Refresh it on every start.
+function syncHookScript() {
+  try {
+    const src = path.join(__dirname, '..', 'hooks', 'apron-hook.js');
+    const dest = path.join(app.getPath('userData'), 'apron-hook.js');
+    const body = fs.readFileSync(src);
+    if (!fs.existsSync(dest) || !fs.readFileSync(dest).equals(body)) fs.writeFileSync(dest, body);
+  } catch (err) {
+    console.error('[hooks] could not copy hook script:', err.message);
+  }
+}
+
 function buildTray() {
   tray = new Tray(nativeImage.createFromBuffer(pillPng(32), { scaleFactor: 2 }));
-  tray.setToolTip('Island');
+  tray.setToolTip('Apron');
   rebuildTray();
 }
 
@@ -213,8 +238,10 @@ ipcMain.on('island:open', (_e, url) => isSafeUrl(url) && shell.openExternal(url)
 ipcMain.on('island:open-config', () => shell.openPath(CONFIG_PATH));
 ipcMain.on('island:accent', (_e, hex) => setAccent(String(hex)));
 ipcMain.on('island:art-color', (_e, on) => setArtColor(on === true));
+ipcMain.on('island:install-update', () => sources.updater && sources.updater.install());
 
 app.whenReady().then(() => {
+  syncHookScript();
   createWindow();
   buildTray();
   applyLoginItem();
@@ -226,6 +253,10 @@ app.whenReady().then(() => {
   sources.media = media.start((v) => update('media', v));
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v));
   startSources();
+  sources.updater = updater.start((v) => {
+    update('update', v);
+    rebuildTray();
+  });
   watchConfig();
   screen.on('display-metrics-changed', place);
   screen.on('display-added', place);

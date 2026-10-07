@@ -1,24 +1,69 @@
 {
-  "name": "island",
-  "version": "0.1.0",
-  "private": true,
-  "description": "A Dynamic Island for Windows: calendar, media controls and Claude Code status.",
+  "name": "apron",
+  "productName": "Apron",
+  "version": "0.2.0",
+  "description": "A Nothing-style Dynamic Island for Windows: music, Google Calendar, Claude Code and GitHub at a glance.",
+  "author": "FRENCHIIIFRIES",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FRENCHIIIFRIES/apron.git"
+  },
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
+    "dist": "electron-builder --win --publish never",
+    "release": "npm version patch && git push --follow-tags",
     "hooks:install": "node scripts/install-hooks.js",
     "hooks:preview": "node scripts/install-hooks.js --dry-run",
     "hooks:uninstall": "node scripts/install-hooks.js --uninstall",
-    "install-app": "node scripts/install-app.js"
+    "icon": "node scripts/make-icon.js"
   },
   "dependencies": {
     "@fontsource/doto": "^5.3.0",
     "@fontsource/space-mono": "^5.3.0",
+    "electron-updater": "^6.8.9",
     "ical-expander": "^3.2.0"
   },
   "devDependencies": {
-    "@electron/packager": "^20.3.0",
-    "electron": "^44.6.0"
-  }
+    "electron": "^44.6.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.frenchiiifries.apron",
+    "productName": "Apron",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "asar": false,
+    "files": [
+      "src/**",
+      "hooks/**",
+      "config.example.json",
+      "package.json",
+      "!**/*.test.js"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Apron"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "FRENCHIIIFRIES",
+        "repo": "apron"
+      }
+    ]
+  },
+  "private": true
 }

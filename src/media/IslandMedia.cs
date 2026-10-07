@@ -70,10 +70,11 @@ static class IslandMedia
         {
             try
             {
-                var s = manager.GetCurrentSession();
-                if (s == null) continue;
                 var cmd = line.Trim();
                 if (Volume.Handle(cmd)) { wake.Set(); continue; }
+                var s = Pick();
+                if (s == null) continue;
+                lock (pickLock) lastCommand = DateTime.UtcNow;
                 switch (cmd)
                 {
                     case "toggle": Await(s.TryTogglePlayPauseAsync()); break;
@@ -91,9 +92,42 @@ static class IslandMedia
         Environment.Exit(0); // parent went away
     }
 
+    // Windows' "current session" jumps to whatever else is playing the moment you pause
+    // (a browser video, say), which would make the next play press go to the wrong app.
+    // So stick with the app we're showing: only move to another playing app when ours
+    // isn't playing and you haven't pressed a control in the last minute.
+    static readonly object pickLock = new object();
+    static string pinned;
+    static DateTime lastCommand = DateTime.MinValue;
+
+    static bool IsPlaying(GlobalSystemMediaTransportControlsSession s)
+    {
+        return s.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+    }
+
+    static GlobalSystemMediaTransportControlsSession Pick()
+    {
+        lock (pickLock)
+        {
+            var current = manager.GetCurrentSession();
+            GlobalSystemMediaTransportControlsSession pin = null;
+            GlobalSystemMediaTransportControlsSession playing = current != null && IsPlaying(current) ? current : null;
+            foreach (var s in manager.GetSessions())
+            {
+                if (s.SourceAppUserModelId == pinned) pin = s;
+                if (playing == null && IsPlaying(s)) playing = s;
+            }
+            bool recentCommand = (DateTime.UtcNow - lastCommand).TotalSeconds < 60;
+            if (pin != null && (IsPlaying(pin) || recentCommand || playing == null)) return pin;
+            var chosen = playing ?? current;
+            if (chosen != null) pinned = chosen.SourceAppUserModelId;
+            return chosen;
+        }
+    }
+
     static string Status()
     {
-        var s = manager.GetCurrentSession();
+        var s = Pick();
         if (s == null) return "{\"active\":false" + Volume.Json() + "}";
         var props = Await(s.TryGetMediaPropertiesAsync());
         var info = s.GetPlaybackInfo();

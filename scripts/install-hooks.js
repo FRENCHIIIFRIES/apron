@@ -1,4 +1,4 @@
-// Adds (or removes) the island's Claude Code hooks in ~/.claude/settings.json.
+// Adds (or removes) Apron's Claude Code hooks in ~/.claude/settings.json.
 // Existing hooks are left untouched; running it twice is a no-op.
 //   node scripts/install-hooks.js            install
 //   node scripts/install-hooks.js --dry-run  show what would change
@@ -8,9 +8,14 @@ const os = require('os');
 const path = require('path');
 
 const EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure'];
-const MARKER = 'island-hook.js';
+// Old (island-hook.js) and current (apron-hook.js) entries are both treated as ours.
+const MARKERS = ['island-hook.js', 'apron-hook.js'];
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json');
-const script = path.resolve(__dirname, '..', 'hooks', MARKER).replace(/\\/g, '/');
+// Hooks run a copy in %APPDATA%\Apron (the app also refreshes it on every start),
+// so they keep working wherever the app or this repo lives.
+const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+const target = path.join(appData, 'Apron', 'apron-hook.js');
+const script = target.replace(/\\/g, '/');
 const command = `node "${script}"`;
 
 const dryRun = process.argv.includes('--dry-run');
@@ -20,7 +25,7 @@ const before = fs.existsSync(SETTINGS) ? fs.readFileSync(SETTINGS, 'utf8') : '{}
 const settings = JSON.parse(before);
 settings.hooks = settings.hooks || {};
 
-const isOurs = (group) => (group.hooks || []).some((h) => String(h.command || '').includes(MARKER));
+const isOurs = (group) => (group.hooks || []).some((h) => MARKERS.some((m) => String(h.command || '').includes(m)));
 
 for (const event of EVENTS) {
   const groups = (settings.hooks[event] || []).filter((g) => !isOurs(g));
@@ -42,6 +47,10 @@ if (dryRun) {
   process.exit(0);
 }
 
-fs.copyFileSync(SETTINGS, `${SETTINGS}.island-backup`);
+if (!uninstall) {
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, '..', 'hooks', 'apron-hook.js'), target);
+}
+fs.copyFileSync(SETTINGS, `${SETTINGS}.apron-backup`);
 fs.writeFileSync(SETTINGS, after);
-console.log(`${uninstall ? 'Removed' : 'Installed'} island hooks in ${SETTINGS} (backup: settings.json.island-backup)`);
+console.log(`${uninstall ? 'Removed' : 'Installed'} Apron hooks in ${SETTINGS} (backup: settings.json.apron-backup)`);

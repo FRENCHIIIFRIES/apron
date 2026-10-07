@@ -326,7 +326,13 @@ function renderMedia() {
   }
   const pos = mediaPosition(m);
   const send = (cmd) => () => window.island.media(cmd);
-  const playBtn = h('button', { class: 'play', title: m.playing ? 'Pause' : 'Play', onclick: send('toggle') }, icon(m.playing ? ICONS.pause : ICONS.play));
+  const toggle = () => {
+    window.island.media('toggle');
+    // Flip the icon straight away; the real state follows a moment later.
+    state.media = { ...state.media, playing: !state.media.playing };
+    renderMedia();
+  };
+  const playBtn = h('button', { class: 'play', title: m.playing ? 'Pause' : 'Play', onclick: toggle }, icon(m.playing ? ICONS.pause : ICONS.play));
   const prevBtn = h('button', { title: 'Previous', onclick: send('prev'), disabled: !m.canPrev }, icon(ICONS.prev));
   const nextBtn = h('button', { title: 'Next', onclick: send('next'), disabled: !m.canNext }, icon(ICONS.next));
 
@@ -775,6 +781,20 @@ function render() {
   if (state.tab === 'timer') renderTimer();
 }
 
+function mediaShape(m) {
+  return [m.active, m.app, m.title, m.artist, m.playing, m.canNext, m.canPrev, (m.art || '').length, m.duration > 0, m.volume == null].join('|');
+}
+
+// "Update" button in the tab bar once a new version has downloaded.
+const updateBtn = $('#update-btn');
+updateBtn.addEventListener('click', () => window.island.installUpdate());
+function renderUpdateButton() {
+  const u = state.update;
+  const ready = Boolean(u && u.status === 'ready');
+  updateBtn.hidden = !ready;
+  if (ready) updateBtn.title = `Restart Apron to update to ${u.next}`;
+}
+
 function onMedia(m) {
   const prev = state.media;
   const key = m && m.active ? `${m.title}|${m.artist}` : '';
@@ -793,13 +813,18 @@ window.island.onUpdate((key, value) => {
     state.tab = 'claude';
   }
   if (key === 'media') onMedia(value);
-  // Volume-only changes shouldn't rebuild the music tab under the cursor.
-  const volumeOnly =
-    key === 'media' && state.media && value && JSON.stringify({ ...value, volume: 0, muted: 0 }) === JSON.stringify({ ...state.media, volume: 0, muted: 0 });
+  // Position/volume ticks mustn't rebuild the music tab: a rebuild between mousedown
+  // and mouseup swallows the click on play/pause.
+  const sameShape = key === 'media' && state.media && value && mediaShape(value) === mediaShape(state.media);
   state[key] = value;
   if (key === 'settings') applySettings(value);
-  if (volumeOnly) {
-    if (state.expanded && state.tab === 'media') updateVolume();
+  if (key === 'update') renderUpdateButton();
+  if (sameShape) {
+    if (state.expanded && state.tab === 'media') {
+      tickMedia();
+      updateVolume();
+    }
+    renderCompact();
     return;
   }
   render();
@@ -807,6 +832,7 @@ window.island.onUpdate((key, value) => {
 window.island.getState().then((s) => {
   Object.assign(state, s);
   applySettings(s.settings);
+  renderUpdateButton();
   if (s.media) onMedia(s.media);
   render();
 });

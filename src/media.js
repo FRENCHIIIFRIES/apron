@@ -4,7 +4,7 @@ const path = require('path');
 
 const COMMANDS = new Set(['toggle', 'next', 'prev', 'volup', 'voldown', 'mute']);
 const SOURCE = path.join(__dirname, 'media', 'IslandMedia.cs');
-const BINARY = path.join(__dirname, '..', 'bin', 'island-media.exe');
+const BINARY = path.join(__dirname, '..', 'bin', 'apron-media.exe');
 
 /**
  * Builds the helper with the C# compiler that ships with every Windows install
