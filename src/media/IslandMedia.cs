@@ -42,6 +42,7 @@ static class IslandMedia
         stdin = new StreamReader(Console.OpenStandardInput(), utf8);
         manager = Await(GlobalSystemMediaTransportControlsSessionManager.RequestAsync());
         new Thread(ReadCommands) { IsBackground = true }.Start();
+        Privacy.Start();
 
         string last = null;
         while (true)
@@ -419,6 +420,71 @@ static class Foreground
             }
             catch { }
             Thread.Sleep(400);
+        }
+    }
+}
+
+// Mic / camera in use, read from Windows' privacy usage records (the same source as
+// the microphone icon in the taskbar). An app is "in use" while LastUsedTimeStop is 0.
+static class Privacy
+{
+    const string Root = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\";
+    static volatile bool started;
+
+    public static void Start()
+    {
+        if (started) return;
+        started = true;
+        new Thread(Loop) { IsBackground = true }.Start();
+    }
+
+    static void Collect(Microsoft.Win32.RegistryKey key, System.Collections.Generic.List<string> users)
+    {
+        if (key == null) return;
+        foreach (var name in key.GetSubKeyNames())
+        {
+            if (name == "NonPackaged") { using (var np = key.OpenSubKey(name)) Collect(np, users); continue; }
+            using (var app = key.OpenSubKey(name))
+            {
+                if (app == null) continue;
+                var start = app.GetValue("LastUsedTimeStart");
+                var stop = app.GetValue("LastUsedTimeStop");
+                if (start is long && (long)start > 0 && stop is long && (long)stop == 0)
+                {
+                    var label = name.Substring(name.LastIndexOf('#') + 1);
+                    bool exe = label.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+                    label = exe ? label.Substring(0, label.Length - 4) : label.Split('_')[0];
+                    // A crash leaves the stop time at 0 forever; only trust it if the app still runs.
+                    if (exe && System.Diagnostics.Process.GetProcessesByName(label).Length == 0) continue;
+                    if (!users.Contains(label)) users.Add(label);
+                }
+            }
+        }
+    }
+
+    static string Json(System.Collections.Generic.List<string> items)
+    {
+        var parts = new System.Collections.Generic.List<string>();
+        foreach (var i in items) parts.Add(IslandMedia.Str(i));
+        return "[" + string.Join(",", parts.ToArray()) + "]";
+    }
+
+    static void Loop()
+    {
+        string last = null;
+        while (true)
+        {
+            try
+            {
+                var mic = new System.Collections.Generic.List<string>();
+                var cam = new System.Collections.Generic.List<string>();
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Root + "microphone")) Collect(k, mic);
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Root + "webcam")) Collect(k, cam);
+                var line = "{\"priv\":{\"mic\":" + Json(mic) + ",\"cam\":" + Json(cam) + "}}";
+                if (line != last) { IslandMedia.Emit(line); last = line; }
+            }
+            catch { }
+            Thread.Sleep(1500);
         }
     }
 }

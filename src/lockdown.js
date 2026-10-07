@@ -63,11 +63,11 @@ function create(config, media, onBlocked) {
     setConfig(next) {
       rules = compile(next);
     },
+    // The foreground watcher itself is switched on by main (screen time uses it too).
     setActive(on) {
-      if (on === active) return;
-      active = on;
-      media.command(on ? 'watch on' : 'watch off');
+      active = Boolean(on);
     },
+    isActive: () => active,
     onForeground(fg) {
       if (!active) return;
       const verdict = judge(fg, rules);

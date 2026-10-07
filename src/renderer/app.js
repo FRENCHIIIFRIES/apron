@@ -23,6 +23,12 @@ const state = {
   lyrics: null,
   todos: [],
   clipboard: [],
+  homework: null,
+  screentime: null,
+  stats: null,
+  privacy: { mic: [], cam: [] },
+  ask: null,
+  launching: false,
 };
 const isPrimary = new URLSearchParams(location.search).get('primary') !== '0';
 
@@ -42,6 +48,11 @@ function h(tag, props = {}, ...children) {
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
   return el;
+}
+
+/** replaceChildren, minus null/false/'' (replaceChildren would print them as text). */
+function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false && k !== ''));
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -153,7 +164,10 @@ function compactView() {
 
   if (state.timer) {
     const left = Math.max(0, (state.timer.end - now) / 1000);
-    return { id: 'timer', tab: 'timer', lead: h('span', { class: 'glyph' }, icon(ICONS.timer)), text: state.timer.lockdown ? 'Focus · locked' : 'Focus', trail: fmtDuration(left) };
+    const t = state.timer;
+    const phase = t.phase === 'break' ? 'Break' : t.phase === 'long' ? 'Long break' : t.lockdown ? 'Focus · locked' : 'Focus';
+    const round = t.mode === 'pomodoro' && t.phase === 'focus' ? ` · ${t.round}` : '';
+    return { id: `timer:${t.phase}`, tab: 'timer', lead: h('span', { class: `glyph${t.phase !== 'focus' ? ' resting' : ''}` }, icon(ICONS.timer)), text: phase + round, trail: fmtDuration(left) };
   }
 
   const events = (state.calendar && state.calendar.events) || [];
@@ -178,8 +192,52 @@ function compactView() {
   return items[Math.floor(now / rotateMs()) % items.length];
 }
 
+const DAY = 864e5;
+const startOfDay = (ms) => {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+
+/** Countdowns from Settings plus "31 days to exam" style all-day calendar events. */
+function countdowns(now = Date.now()) {
+  const out = [];
+  for (const c of (state.settings && state.settings.countdowns) || []) {
+    const [y, m, d] = c.date.split('-').map(Number);
+    const days = Math.round((new Date(y, m - 1, d).getTime() - startOfDay(now)) / DAY);
+    if (days >= 0) out.push({ title: c.title, days });
+  }
+  const events = (state.calendar && state.calendar.events) || [];
+  for (const e of events) {
+    if (!e.allDay || dayKey(e.start) !== dayKey(now)) continue;
+    const m = e.title.match(/(\d+)\s+days?\s+(?:to|until|till|left(?: for| until)?)\s+(.+)$/i);
+    if (m) out.push({ title: m[2].replace(/[.!]+$/, ''), days: Number(m[1]) });
+  }
+  return out.sort((a, b) => a.days - b.days);
+}
+
+const fmtDays = (n) => (n === 0 ? 'today' : n === 1 ? '1 day' : `${n} days`);
+
+/** Homework due in the next two weeks, soonest first. */
+function dueItems(now = Date.now()) {
+  const hw = state.homework;
+  if (!hw || !hw.events) return [];
+  return hw.events.filter((e) => e.end >= now - 3600e3).sort((a, b) => a.start - b.start);
+}
+
+function fmtDue(ms, now = Date.now()) {
+  const days = Math.round((startOfDay(ms) - startOfDay(now)) / DAY);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days < 7) return new Date(ms).toLocaleDateString([], { weekday: 'short' });
+  return `in ${days}d`;
+}
+
 function rotationItems(now, events, soon) {
   const items = [];
+  const due = dueItems(now).find((e) => e.start - now < 3 * DAY);
+  if (due) items.push({ id: 'due', tab: 'calendar', lead: h('span', { class: 'glyph-text' }, '✎'), text: `${due.title}`, trail: `due ${fmtDue(due.start, now)}` });
+  const cd = countdowns(now)[0];
+  if (cd) items.push({ id: 'countdown', tab: 'calendar', lead: h('span', { class: 'glyph-text' }, '⏳'), text: cd.title, trail: cd.days === 0 ? 'today' : `${cd.days}d` });
   const current = events.find((e) => !e.allDay && e.start <= now && e.end > now);
   if (current) {
     items.push({ id: 'class', tab: 'calendar', lead: calLead(), text: current.title, trail: `${Math.ceil((current.end - now) / 60e3)}m left` });
@@ -246,9 +304,9 @@ function renderCompact() {
     el.classList.add('swap');
     lastCompactId = v.id;
   }
-  $('#compact-lead').replaceChildren(v.lead);
-  $('#compact-text').replaceChildren(v.text);
-  $('#compact-trail').replaceChildren(v.trail);
+  fill($('#compact-lead'), v.lead);
+  fill($('#compact-text'), v.text);
+  fill($('#compact-trail'), v.trail);
 }
 
 function rainChance(w, ms) {
@@ -347,7 +405,7 @@ function renderMedia() {
   const m = state.media;
   const root = $('#media');
   if (!m || !m.active) {
-    root.replaceChildren(
+    fill(root, 
       h('div', { class: 'empty' }, m && m.status === 'error' ? `Media unavailable: ${m.error}` : 'Nothing playing'),
       m && volumeRow(m),
     );
@@ -365,7 +423,7 @@ function renderMedia() {
   const prevBtn = h('button', { title: 'Previous', onclick: send('prev'), disabled: !m.canPrev }, icon(ICONS.prev));
   const nextBtn = h('button', { title: 'Next', onclick: send('next'), disabled: !m.canNext }, icon(ICONS.next));
 
-  root.replaceChildren(
+  fill(root, 
     h(
       'div',
       { class: 'media-top' },
@@ -375,7 +433,25 @@ function renderMedia() {
         { class: 'media-meta' },
         h('div', { class: 'media-title' }, m.title || 'Unknown'),
         h('div', { class: 'media-artist' }, m.artist || ''),
-        h('div', { class: 'media-app' }, appName(m.app)),
+        h(
+          'div',
+          { class: 'media-app' },
+          appName(m.app),
+          h(
+            'button',
+            {
+              class: 'share-btn',
+              title: 'Copy a link that opens this song in Spotify (and other apps)',
+              onclick: async () => {
+                flash({ id: `sharing:${Date.now()}`, lead: dot(), text: 'Finding the song…', trail: '' }, 4000);
+                const r = await window.island.share();
+                if (r && r.ok) flash({ id: `shared:${Date.now()}`, lead: dot('done'), text: r.exact ? 'Song link copied · opens in Spotify' : 'Spotify search link copied', trail: '⧉' }, 2500);
+                else flash({ id: `shared:${Date.now()}`, lead: dot(), text: "Couldn't find it", trail: '' }, 2500);
+              },
+            },
+            'Share',
+          ),
+        ),
       ),
     ),
     m.duration > 0 &&
@@ -454,11 +530,11 @@ function renderCalendar() {
   const c = state.calendar;
   const root = $('#calendar');
   if (!c) {
-    root.replaceChildren(h('div', { class: 'empty' }, 'Loading calendar…'));
+    fill(root, h('div', { class: 'empty' }, 'Loading calendar…'));
     return;
   }
   if (c.status === 'unconfigured') {
-    root.replaceChildren(
+    fill(root, 
       h(
         'div',
         { class: 'empty' },
@@ -489,9 +565,37 @@ function renderCalendar() {
     );
   }
 
+  const cds = countdowns(now).slice(0, 3);
+  if (cds.length) {
+    items.push(
+      h(
+        'div',
+        { class: 'countdowns' },
+        ...cds.map((c) => h('div', { class: 'countdown' }, h('span', { class: 'cd-days' }, c.days === 0 ? 'TODAY' : String(c.days)), h('span', { class: 'cd-label' }, c.days === 0 ? c.title : `day${c.days === 1 ? '' : 's'} to ${c.title}`))),
+      ),
+    );
+  }
+  const due = dueItems(now).slice(0, 5);
+  if (due.length) {
+    items.push(h('div', { class: 'heading' }, 'Due soon'));
+    for (const e of due) {
+      items.push(
+        h(
+          'div',
+          { class: `row${e.start - now < DAY ? ' now' : ''}` },
+          h('span', { class: 'time' }, fmtDue(e.start, now)),
+          h('div', { class: 'main' }, h('div', { class: 'title' }, e.title), e.location && h('div', { class: 'sub' }, e.location)),
+        ),
+      );
+    }
+  }
+
   let lastDay = null;
   let focusSet = false;
+  const earlier = c.events.filter((e) => !e.allDay && e.end <= now).length;
   for (const e of c.events) {
+    // Finished classes just push what's next out of view; skip them.
+    if (!e.allDay && e.end <= now) continue;
     const day = e.allDay ? dayKey(e.start) : dayKey(Math.max(e.start, now));
     if (day !== lastDay) {
       items.push(h('div', { class: 'heading' }, day === today ? 'Today' : 'Tomorrow'));
@@ -531,13 +635,14 @@ function renderCalendar() {
       ),
     );
   }
+  if (earlier) items.push(h('div', { class: 'empty small' }, `${earlier} earlier today already done`));
   if (!c.events.length) items.push(h('div', { class: 'empty' }, 'Nothing today or tomorrow 🎉'));
-  root.replaceChildren(...items);
+  fill(root, ...items);
   // On open, jump past the classes that already happened.
   if (scrollCalendar) {
     scrollCalendar = false;
-    const focus = $('#cal-focus');
-    root.scrollTop = focus ? focus.offsetTop - root.offsetTop - 26 : 0;
+    // Finished classes are hidden now, so the top (weather, countdowns, due) is what's next.
+    root.scrollTop = 0;
   }
 }
 
@@ -619,7 +724,7 @@ function renderClaude() {
     }
   }
 
-  root.replaceChildren(...items);
+  fill(root, ...items);
 }
 
 function renderBadge() {
@@ -635,8 +740,42 @@ function renderBadge() {
 let lockdownPref = null;
 const lockdownOn = () => (lockdownPref === null ? !state.settings || state.settings.lockdownDefault !== false : lockdownPref);
 
-function startTimer(minutes) {
-  window.island.timer('start', { minutes, lockdown: lockdownOn() });
+function startTimer(minutes, mode) {
+  window.island.timer('start', { minutes, lockdown: lockdownOn(), mode });
+}
+
+function fmtSpent(sec) {
+  const m = Math.round(sec / 60);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+function statsLine() {
+  const st = state.stats;
+  if (!st) return null;
+  const parts = [];
+  if (st.streak) parts.push(`🔥 ${st.streak}-day streak`);
+  parts.push(`${st.today} session${st.today === 1 ? '' : 's'} today`);
+  return h('div', { class: 'stats-line' }, parts.join(' · '));
+}
+
+function screenTimeBlock() {
+  const s = state.screentime;
+  if (!s || !s.items.length) return null;
+  const max = Math.max(...s.items.map((i) => i.seconds), 1);
+  return h(
+    'div',
+    { class: 'screentime' },
+    h('div', { class: 'heading' }, `Screen time today · ${fmtSpent(s.total)}${s.distracting ? ` · ${fmtSpent(s.distracting)} distracted` : ''}`),
+    ...s.items.slice(0, 6).map((i) =>
+      h(
+        'div',
+        { class: `st-row${i.distracting ? ' bad' : ''}` },
+        h('span', { class: 'st-label' }, i.label),
+        h('span', { class: 'st-bar' }, h('i', { style: `width:${Math.max(3, (i.seconds / max) * 100)}%` })),
+        h('span', { class: 'st-time' }, fmtSpent(i.seconds)),
+      ),
+    ),
+  );
 }
 
 function chime() {
@@ -671,29 +810,44 @@ function renderTimer() {
   const root = $('#timer');
   const t = state.timer;
   if (!t) {
-    root.replaceChildren(
+    fill(root, 
       h('div', { class: 'timer-big idle' }, '00:00'),
-      h('div', { class: 'timer-presets' }, ...[5, 15, 25, 50].map((m) => h('button', { class: 'pill-btn ghost', onclick: () => startTimer(m) }, `${m} min`))),
+      h(
+        'div',
+        { class: 'timer-presets' },
+        h('button', { class: 'pill-btn', onclick: () => startTimer(0, 'pomodoro'), title: 'Focus/break cycles that keep going' }, 'Pomodoro'),
+        ...[15, 25, 50].map((m) => h('button', { class: 'pill-btn ghost', onclick: () => startTimer(m) }, `${m} min`)),
+      ),
       lockdownToggle(lockdownOn(), () => {
         lockdownPref = !lockdownOn();
         renderTimer();
       }),
       lockdownOn() && blockedList(),
+      statsLine(),
+      screenTimeBlock(),
     );
     return;
   }
   const left = Math.max(0, (t.end - Date.now()) / 1000);
-  root.replaceChildren(
+  fill(root, 
     h('div', { class: `timer-big${t.lockdown ? ' locked' : ''}` }, fmtDuration(left).padStart(5, '0')),
     h('div', { class: 'track timer-track' }, h('i', { style: `width:${(1 - (left * 1000) / t.total) * 100}%` })),
-    h('div', { class: 'timer-label' }, `Ends at ${fmtTime(t.end)}`),
+    h(
+      'div',
+      { class: 'timer-label' },
+      t.mode === 'pomodoro' ? `${t.phase === 'focus' ? `Focus · round ${t.round}` : t.phase === 'long' ? 'Long break' : 'Break'} · ends ${fmtTime(t.end)}` : `Ends at ${fmtTime(t.end)}`,
+    ),
     h(
       'div',
       { class: 'timer-presets' },
-      h('button', { class: 'pill-btn ghost', onclick: () => window.island.timer('add', 5) }, '+5 min'),
+      t.mode === 'pomodoro'
+        ? h('button', { class: 'pill-btn ghost', onclick: () => window.island.timer('skip') }, t.phase === 'focus' ? 'Skip to break' : 'Skip break')
+        : h('button', { class: 'pill-btn ghost', onclick: () => window.island.timer('add', 5) }, '+5 min'),
       lockdownToggle(t.lockdown, () => window.island.timer('lockdown', !t.lockdown)),
       h('button', { class: 'pill-btn', onclick: () => window.island.timer('stop') }, 'Stop'),
     ),
+    statsLine(),
+    screenTimeBlock(),
   );
 }
 
@@ -733,11 +887,11 @@ function renderTodo() {
   const root = $('#todo');
   const todos = state.todos || [];
   if (!todos.length) {
-    root.replaceChildren(h('div', { class: 'empty' }, 'Nothing to do. Nice.'));
+    fill(root, h('div', { class: 'empty' }, 'Nothing to do. Nice.'));
     return;
   }
   const done = todos.filter((t) => t.done).length;
-  root.replaceChildren(
+  fill(root, 
     ...todos.map((t) =>
       h(
         'div',
@@ -778,10 +932,10 @@ function renderClip() {
   const root = $('#clip');
   const items = state.clipboard || [];
   if (!items.length) {
-    root.replaceChildren(codeCard() || '', h('div', { class: 'empty' }, 'Copy something and it shows up here. Kept in memory only.'));
+    fill(root, codeCard() || '', h('div', { class: 'empty' }, 'Copy something and it shows up here. Kept in memory only.'));
     return;
   }
-  root.replaceChildren(
+  fill(root, 
     codeCard() || '',
     ...items.map((c, i) =>
       h(
@@ -801,6 +955,123 @@ function renderClip() {
     h('button', { class: 'pill-btn ghost clear-done', onclick: () => window.island.clipboard('clear') }, 'Clear history'),
   );
 }
+
+// ---------- mic / camera dots (like a phone's privacy indicators) ----------
+
+function renderPrivacy() {
+  const p = state.privacy || { mic: [], cam: [] };
+  const el = $('#priv');
+  const dots = [];
+  if (p.cam.length) dots.push(h('i', { class: 'cam', title: `Camera: ${p.cam.join(', ')}` }));
+  if (p.mic.length) dots.push(h('i', { class: 'mic', title: `Microphone: ${p.mic.join(', ')}` }));
+  fill(el, ...dots);
+}
+
+// ---------- launcher (Ctrl+Alt+Space) ----------
+
+const launchInput = $('#launch-input');
+const launchResults = $('#launch-results');
+let launchItems = [];
+let launchSel = 0;
+let searchSeq = 0;
+const KIND_GLYPH = { open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
+
+function renderLaunchResults() {
+  const a = state.ask;
+  const showAnswer = a && state.askOpen;
+  if (showAnswer) {
+    fill(launchResults, 
+      h(
+        'div',
+        { class: `answer${a.status === 'error' ? ' err' : ''}` },
+        h('div', { class: 'answer-q' }, `✦ ${a.question}`),
+        h('div', { class: 'answer-text' }, a.text || (a.status === 'streaming' ? 'Thinking…' : '')),
+        a.status === 'streaming' ? h('div', { class: 'answer-meta' }, 'Claude is answering · Esc to stop') : h('div', { class: 'answer-meta' }, 'Enter a new question, or Esc to close'),
+      ),
+    );
+    const t = launchResults.querySelector('.answer-text');
+    t.scrollTop = t.scrollHeight;
+    return;
+  }
+  fill(launchResults, 
+    ...launchItems.map((it, i) =>
+      h(
+        'div',
+        { class: `lr${i === launchSel ? ' sel' : ''}`, onmousedown: (ev) => ev.preventDefault(), onclick: () => runLaunch(i) },
+        h('span', { class: 'lr-glyph' }, KIND_GLYPH[it.kind] || '•'),
+        h('span', { class: 'lr-title' }, it.title),
+        h('span', { class: 'lr-hint' }, it.hint),
+      ),
+    ),
+  );
+}
+
+async function updateLaunch() {
+  const seq = ++searchSeq;
+  const items = await window.island.launcherSearch(launchInput.value);
+  if (seq !== searchSeq) return;
+  launchItems = items;
+  launchSel = 0;
+  state.askOpen = false;
+  renderLaunchResults();
+}
+
+function runLaunch(i) {
+  const it = launchItems[i];
+  if (!it || it.kind === 'hint') return;
+  window.island.launcherRun(it);
+  if (it.kind === 'ask') {
+    state.askOpen = true;
+    launchInput.value = '? ';
+    renderLaunchResults();
+    return; // stay open to show the answer
+  }
+  closeLauncher();
+}
+
+function openLauncher() {
+  state.launching = true;
+  state.askOpen = false;
+  expand();
+  islandEl.classList.add('launching');
+  launchInput.value = '';
+  launchItems = [];
+  renderLaunchResults();
+  setTimeout(() => launchInput.focus(), 30);
+}
+
+function closeLauncher() {
+  if (!state.launching) return;
+  state.launching = false;
+  islandEl.classList.remove('launching');
+  if (state.ask && state.ask.status === 'streaming') window.island.askCancel();
+  launchInput.blur();
+  collapse();
+}
+
+launchInput.addEventListener('input', () => updateLaunch());
+launchInput.addEventListener('focus', () => {
+  typing = true;
+});
+launchInput.addEventListener('blur', () => {
+  typing = false;
+  window.island.setFocus(false);
+  if (state.launching) setTimeout(() => state.launching && document.activeElement !== launchInput && closeLauncher(), 150);
+});
+launchInput.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    ev.preventDefault();
+    closeLauncher();
+  } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    if (!launchItems.length) return;
+    launchSel = (launchSel + (ev.key === 'ArrowDown' ? 1 : -1) + launchItems.length) % launchItems.length;
+    renderLaunchResults();
+  } else if (ev.key === 'Enter') {
+    ev.preventDefault();
+    runLaunch(launchSel);
+  }
+});
 
 // ---------- events from main (notifications, copies, lockdown, timer) ----------
 
@@ -850,6 +1121,12 @@ function onEvent(e) {
     flash({ id: `b:${e.at}`, alert: true, tab: 'timer', lead: dot('waiting'), text: e.text, trail: e.trail }, 3500);
   } else if (e.type === 'info') {
     flash({ id: `i:${e.at}`, lead: dot(), text: e.text, trail: e.trail || '' }, 3000);
+  } else if (e.type === 'phase') {
+    const rest = e.phase !== 'focus';
+    flash({ id: `ph:${e.at}`, alert: !rest, tab: 'timer', lead: dot(rest ? 'done' : 'waiting'), text: rest ? `${e.phase === 'long' ? 'Long break' : 'Break'} · stand up, stretch` : `Back to focus · round ${e.round}`, trail: `${e.minutes}m` }, 6000);
+    if (isPrimary) chime();
+  } else if (e.type === 'sleep') {
+    flash({ id: `sl:${e.at}`, alert: !e.soft, lead: h('span', { class: 'glyph-text' }, '☾'), text: e.text, trail: e.soft ? '' : 'SLEEP' }, e.soft ? 8000 : 12000);
   } else if (e.type === 'timer-done') {
     state.timerDoneAt = e.at;
     if (isPrimary) chime();
@@ -985,13 +1262,12 @@ let collapseTimer = null;
 window.island.onHover((inside) => {
   clearTimeout(collapseTimer);
   if (inside) expand();
-  else if (!pinned && !state.held && !typing) collapseTimer = setTimeout(collapse, 300);
+  else if (!pinned && !state.held && !typing && !state.launching) collapseTimer = setTimeout(collapse, 300);
 });
 
 window.island.onToggle(() => {
-  state.held = !state.held;
-  if (state.held) expand();
-  else collapse();
+  if (state.launching) closeLauncher();
+  else openLauncher();
 });
 
 function render() {
@@ -1053,6 +1329,20 @@ window.island.onUpdate((key, value) => {
     if (state.expanded && state.tab === 'media') tickLyrics();
     return;
   }
+  if (key === 'privacy') {
+    state.privacy = value;
+    renderPrivacy();
+    return;
+  }
+  if (key === 'ask') {
+    state.ask = value;
+    if (state.launching) renderLaunchResults();
+    return;
+  }
+  if (key === 'screentime' && !(state.expanded && state.tab === 'timer')) {
+    state.screentime = value;
+    return;
+  }
   if (key === 'clipboard' && !(state.expanded && state.tab === 'clip')) {
     state.clipboard = value;
     return;
@@ -1074,10 +1364,23 @@ window.island.onUpdate((key, value) => {
   }
   render();
 });
+// APRON_EXPAND=launcher (optionally APRON_QUERY=…) opens the launcher, for screenshots.
+if (pinned === 'launcher') {
+  setTimeout(() => {
+    openLauncher();
+    const q = new URLSearchParams(location.search).get('q');
+    if (q) {
+      launchInput.value = q;
+      updateLaunch();
+    }
+  }, 300);
+}
+
 window.island.getState().then((s) => {
   Object.assign(state, s);
   applySettings(s.settings);
   renderUpdateButton();
+  renderPrivacy();
   if (s.media) onMedia(s.media);
   render();
 });

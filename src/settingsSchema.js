@@ -35,6 +35,24 @@ const SCHEMA = {
   weatherCity: text(80),
   units: oneOf('c', 'f'),
   icalUrls: list(10, 500, isHttps),
+  pomodoro: (v) => {
+    if (!v || typeof v !== 'object') return undefined;
+    return { focus: int(5, 120)(v.focus) || 25, break: int(1, 30)(v.break) || 5, long: int(5, 60)(v.long) || 15, every: int(2, 8)(v.every) || 4 };
+  },
+  homeworkUrls: list(10, 500, isHttps),
+  countdowns: (v) =>
+    Array.isArray(v)
+      ? v
+          .filter((c) => c && typeof c.title === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(c.date))
+          .map((c) => ({ title: c.title.trim().slice(0, 60), date: c.date }))
+          .filter((c) => c.title)
+          .slice(0, 10)
+      : undefined,
+  notesFile: text(400),
+  sleepReminder: bool,
+  bedtime: (v) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : undefined),
+  screenTime: bool,
+  privacyDots: bool,
   lockdown: (v) => {
     if (!v || typeof v !== 'object') return undefined;
     const site = list(50, 60);

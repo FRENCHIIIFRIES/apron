@@ -203,3 +203,21 @@ section h2::before { content: "● "; color: var(--accent); }
   pointer-events: none;
 }
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+.mini { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1; }
+.mini small { color: var(--muted); font-size: 10px; }
+.num {
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: #000;
+  box-shadow: inset 0 0 0 1px var(--faint);
+  text-align: center;
+  font-family: var(--dotted);
+  font-weight: 800;
+  font-size: 18px;
+  outline: none;
+}
+.num:focus { box-shadow: inset 0 0 0 1px var(--accent); }
+.text.date { flex: none; width: auto; color-scheme: dark; }

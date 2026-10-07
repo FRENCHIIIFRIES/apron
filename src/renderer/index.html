@@ -10,6 +10,7 @@
   <div id="island" class="collapsed">
     <span class="ear left"></span>
     <span class="ear right"></span>
+    <span class="priv" id="priv"></span>
     <div class="body">
     <div class="compact">
       <span class="lead" id="compact-lead"></span>
@@ -18,6 +19,10 @@
     </div>
 
     <div class="expanded">
+      <div class="launcher" id="launcher">
+        <input id="launch-input" autocomplete="off" spellcheck="false" placeholder="Open an app or site  ·  ? ask Claude  ·  n note  ·  t to-do">
+        <div class="launch-results" id="launch-results"></div>
+      </div>
       <nav class="tabs">
         <button data-tab="media">Music</button>
         <button data-tab="calendar">Cal</button>

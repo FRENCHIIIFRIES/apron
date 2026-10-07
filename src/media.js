@@ -30,8 +30,8 @@ function ensureBinary() {
   return BINARY;
 }
 
-/** onUpdate(mediaStatus); onForeground({hwnd, exe, title}) while `watch on`. */
-function start(onUpdate, onForeground = () => {}) {
+/** onUpdate(mediaStatus); onForeground({hwnd, exe, title}) while `watch on`; onPrivacy({mic, cam}). */
+function start(onUpdate, onForeground = () => {}, onPrivacy = () => {}) {
   let proc = null;
   let stopped = false;
 
@@ -59,6 +59,7 @@ function start(onUpdate, onForeground = () => {}) {
         try {
           const msg = JSON.parse(line);
           if (msg.fg) onForeground(msg.fg);
+          else if (msg.priv) onPrivacy(msg.priv);
           else onUpdate({ status: 'ok', ...msg });
         } catch {
           // ignore a malformed line

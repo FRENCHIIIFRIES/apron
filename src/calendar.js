@@ -38,24 +38,27 @@ function parseEvents(ics, from, to, calendar = 0) {
   return out.filter((e) => e.end > from.getTime() && e.start < to.getTime());
 }
 
-function dayRange(now = new Date()) {
+function dayRange(now = new Date(), days = 2) {
   const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+  const to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days);
   return { from, to };
 }
 
-function start(config, onUpdate) {
+/** opts.urls overrides config.icalUrls (homework feeds); opts.days is how far ahead to look. */
+function start(config, onUpdate, opts = {}) {
+  const urls = opts.urls || config.icalUrls;
+  const days = opts.days || 2;
   let events = [];
   let stopped = false;
 
   async function refresh() {
-    if (!config.icalUrls.length) {
+    if (!urls.length) {
       onUpdate({ status: 'unconfigured', events: [] });
       return;
     }
-    const { from, to } = dayRange();
+    const { from, to } = dayRange(new Date(), days);
     const results = await Promise.allSettled(
-      config.icalUrls.map(async (url, i) => {
+      urls.map(async (url, i) => {
         const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
         if (!res.ok) throw new Error(`calendar ${i + 1}: HTTP ${res.status}`);
         return parseEvents(await res.text(), from, to, i);

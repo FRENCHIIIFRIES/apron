@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage, globalShortcut, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, Tray, Menu, nativeImage, globalShortcut, clipboard, safeStorage, powerMonitor } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { loadConfig, saveConfig, CONFIG_PATH, HEX } = require('./config');
@@ -10,7 +10,12 @@ const weather = require('./weather');
 const lyrics = require('./lyrics');
 const notifications = require('./notifications');
 const lockdown = require('./lockdown');
-const { todoStore, timerStore, clipboardWatcher } = require('./stores');
+const { todoStore, timerStore, statsStore, clipboardWatcher } = require('./stores');
+const screentime = require('./screentime');
+const share = require('./share');
+const notes = require('./notes');
+const ask = require('./ask');
+const launcher = require('./launcher');
 const { pillPng } = require('./icon');
 const updater = require('./updater');
 const hooksInstall = require('./hooksInstall');
@@ -35,6 +40,7 @@ function settingsPayload() {
     rotateSeconds: config.rotateSeconds,
     lyrics: config.lyrics !== false,
     peek: config.peek !== false,
+    countdowns: config.countdowns || [],
   };
 }
 
@@ -50,6 +56,11 @@ const state = {
   todos: [],
   timer: null,
   clipboard: [],
+  homework: null, // due items from ManageBac / Classroom feeds
+  screentime: null, // today's time per site/app
+  stats: null, // focus sessions today + streak
+  privacy: { mic: [], cam: [] }, // apps using the mic / camera right now
+  ask: null, // the latest "Ask Claude" answer
   code: null, // last one-time code seen in a notification
   event: null, // short-lived: notification / copied / blocked / timer-done
   settings: settingsPayload(),
@@ -121,6 +132,7 @@ function createNotch(display) {
   // APRON_EXPAND=media|calendar|claude|focus|todo|clip pins Apron open on that tab (for screenshots).
   const query = { primary: display.id === screen.getPrimaryDisplay().id ? '1' : '0' };
   if (process.env.APRON_EXPAND) query.expand = process.env.APRON_EXPAND;
+  if (process.env.APRON_QUERY) query.q = process.env.APRON_QUERY;
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query });
   win.once('ready-to-show', () => {
     place(win, display);
@@ -178,17 +190,119 @@ function trackHover() {
 
 function startSources() {
   sources.calendar = calendar.start(config, (v) => update('calendar', v));
+  sources.homework = calendar.start(config, (v) => update('homework', v), { urls: config.homeworkUrls || [], days: 14 });
   sources.github = github.start(config, (v) => update('github', v));
   sources.weather = weather.start(config, (v) => update('weather', v));
 }
 
 function stopSources() {
-  for (const key of ['calendar', 'github', 'weather']) if (sources[key]) sources[key].stop();
+  for (const key of ['calendar', 'homework', 'github', 'weather']) if (sources[key]) sources[key].stop();
 }
 
 function refreshLockdown() {
   const t = state.timer;
-  sources.lockdown.setActive(Boolean(t && t.lockdown));
+  // Lockdown runs during focus, not during Pomodoro breaks.
+  sources.lockdown.setActive(Boolean(t && t.lockdown && (t.phase || 'focus') === 'focus'));
+  refreshWatch();
+}
+
+// The foreground-window watcher feeds both lockdown and screen time.
+let watching = null;
+function refreshWatch() {
+  if (!sources.media || !sources.lockdown) return;
+  const on = config.screenTime !== false || sources.lockdown.isActive();
+  if (on === watching) return;
+  watching = on;
+  sources.media.command(on ? 'watch on' : 'watch off');
+}
+
+// ---------- AI key (encrypted at rest with Windows DPAPI via safeStorage) ----------
+
+function getAiKey() {
+  if (!config.aiKeyEnc) return '';
+  try {
+    return safeStorage.decryptString(Buffer.from(config.aiKeyEnc, 'base64'));
+  } catch {
+    return '';
+  }
+}
+
+function setAiKey(key) {
+  const k = String(key || '').trim();
+  if (!k) return setConfig({ aiKeyEnc: '' });
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Windows encryption isn't available, so the key wasn't saved");
+  setConfig({ aiKeyEnc: safeStorage.encryptString(k).toString('base64') });
+}
+
+// ---------- sleep reminder ----------
+
+let lastSleepNudge = 0;
+let windDownDay = '';
+function checkBedtime() {
+  if (!config.sleepReminder || !/^\d\d:\d\d$/.test(config.bedtime || '')) return;
+  const now = new Date();
+  const [hh, mm] = config.bedtime.split(':').map(Number);
+  const bed = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm);
+  // After midnight, bedtime was "yesterday".
+  if (now.getHours() < 5 && hh >= 12) bed.setDate(bed.getDate() - 1);
+  const diff = now - bed;
+  const label = bed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const day = bed.toDateString();
+  if (diff >= -30 * 60e3 && diff < -25 * 60e3 && windDownDay !== day) {
+    windDownDay = day;
+    emit({ type: 'sleep', soft: true, text: `Wind down · bed at ${label}` });
+  } else if (diff >= 0 && diff < 5 * 3600e3 && Date.now() - lastSleepNudge > 20 * 60e3) {
+    lastSleepNudge = Date.now();
+    emit({ type: 'sleep', soft: false, text: diff < 60e3 ? `It's ${label}. Bedtime` : `${Math.round(diff / 60e3)}m past bedtime` });
+  }
+}
+
+// ---------- launcher ----------
+
+let launcherIndex = null;
+let launcherBuiltAt = 0;
+function getIndex() {
+  if (!launcherIndex || Date.now() - launcherBuiltAt > 10 * 60e3) {
+    launcherIndex = launcher.buildIndex();
+    launcherBuiltAt = Date.now();
+  }
+  return launcherIndex;
+}
+
+async function runLauncher(item) {
+  if (!item || typeof item !== 'object') return;
+  const text = String(item.title || '').slice(0, 2000);
+  switch (item.kind) {
+    case 'open': {
+      // Only open things that are actually in the index.
+      const hit = getIndex().find((i) => i.path === item.path);
+      if (hit) await shell.openPath(hit.path);
+      break;
+    }
+    case 'url':
+      if (isSafeUrl(item.url)) shell.openExternal(item.url);
+      break;
+    case 'search':
+      shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(text)}`);
+      break;
+    case 'ask':
+      sources.ask.ask(text);
+      break;
+    case 'note': {
+      try {
+        const where = notes.append(config, text);
+        emit({ type: 'info', text: 'Note saved', trail: '✓', detail: where });
+      } catch (err) {
+        emit({ type: 'info', text: `Couldn't save note: ${err.message}`, trail: '!' });
+      }
+      break;
+    }
+    case 'todo':
+      stores.todos.add(text);
+      emit({ type: 'info', text: 'Added to your to-dos', trail: '☐' });
+      break;
+    default:
+  }
 }
 
 function loginItemOptions() {
@@ -217,6 +331,7 @@ function applyConfig(next) {
     startSources();
   }
   if (sources.lockdown) sources.lockdown.setConfig(config);
+  refreshWatch();
   if (changed('startWithWindows')) applyLoginItem();
   if (changed('displays', 'display', 'offsetY')) syncNotches();
   update('settings', settingsPayload());
@@ -279,8 +394,11 @@ function buildTray() {
 // ---------- settings window ----------
 
 function settingsSnapshot() {
+  const { aiKeyEnc, ...safeConfig } = config;
   return {
-    config: { ...config },
+    config: safeConfig,
+    hasAiKey: Boolean(aiKeyEnc),
+    notesTarget: notes.target(config).label,
     version: app.getVersion(),
     configPath: CONFIG_PATH,
     builtInSites: lockdown.DEFAULT_BLOCK.map(([label]) => label),
@@ -397,16 +515,34 @@ ipcMain.on('island:todo', (_e, op, arg) => {
 });
 ipcMain.on('island:timer', (_e, op, arg) => {
   const t = stores.timer;
-  if (op === 'start') t.start(arg && arg.minutes, arg && arg.lockdown);
+  if (op === 'start') t.start(arg && arg.minutes, arg && arg.lockdown, arg && arg.mode);
+  else if (op === 'skip') t.skip();
   else if (op === 'add') t.add(Number(arg) || 1);
   else if (op === 'lockdown') t.setLockdown(arg === true);
   else if (op === 'stop') t.stop();
 });
 ipcMain.on('island:open-settings', () => openSettings());
+ipcMain.handle('island:launcher-search', (_e, input) => launcher.search(getIndex(), String(input || '').slice(0, 300)));
+ipcMain.on('island:launcher-run', (_e, item) => runLauncher(item));
+ipcMain.on('island:ask-cancel', () => sources.ask && sources.ask.cancel());
+ipcMain.handle('island:share', async () => {
+  const m = state.media;
+  if (!m || !m.title) return { ok: false };
+  const link = await share.spotifyLink(m.title, m.artist);
+  await clipboard.writeText(link.url);
+  return { ok: true, ...link };
+});
 
 // From the Settings window.
 ipcMain.handle('settings:get', () => settingsSnapshot());
 ipcMain.handle('settings:set', (_e, patch) => {
+  if (patch && typeof patch.aiKey === 'string') {
+    try {
+      setAiKey(patch.aiKey.slice(0, 300));
+    } catch (err) {
+      return { ok: false, error: err.message, ...settingsSnapshot() };
+    }
+  }
   const clean = sanitize(patch);
   if (Object.keys(clean).length) setConfig(clean);
   return settingsSnapshot();
@@ -448,10 +584,14 @@ app.whenReady().then(() => {
 
   // Ctrl+Alt+Space holds the notch on the screen you're on open (and closes it again).
   if (process.env.APRON_SETTINGS) openSettings();
+  // Ctrl+Alt+Space opens the launcher on the screen you're on (and closes it again).
   globalShortcut.register('Control+Alt+Space', () => {
     const d = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
     const n = notches.get(d.id) || notches.values().next().value;
-    if (n && !n.win.isDestroyed()) n.win.webContents.send('island:toggle');
+    if (!n || n.win.isDestroyed()) return;
+    n.win.setFocusable(true);
+    n.win.focus();
+    n.win.webContents.send('island:toggle');
   });
 
   const lyricSource = lyrics.create((v) => update('lyrics', v));
@@ -460,9 +600,24 @@ app.whenReady().then(() => {
       update('media', v);
       lyricSource.track(v);
     },
-    (fg) => sources.lockdown.onForeground(fg),
+    (fg) => {
+      sources.lockdown.onForeground(fg);
+      if (sources.screentime) sources.screentime.onForeground(fg);
+    },
+    (p) => update('privacy', config.privacyDots === false ? { mic: [], cam: [] } : p),
   );
   sources.lockdown = lockdown.create(config, sources.media, (label) => emit({ type: 'blocked', text: `${label} is blocked`, trail: 'FOCUS' }));
+  sources.screentime = screentime.create(
+    path.join(app.getPath('userData'), 'screentime.json'),
+    {
+      judge: (fg) => lockdown.judge(fg, lockdown.compile(config)),
+      isBlocked: (label) => lockdown.compile(config).block.some((b) => b.label === label),
+      idleSeconds: () => powerMonitor.getSystemIdleTime(),
+    },
+    (v) => update('screentime', v),
+  );
+  sources.ask = ask.create(getAiKey, (v) => update('ask', v));
+  sources.sleep = { stop: clearInterval.bind(null, setInterval(checkBedtime, 30e3)) };
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v), { approvals: () => config.claudeApprovals !== false });
   sources.notifications = notifications.start(config, (n) => {
     // Distracting apps stay quiet during a locked-down focus session.
@@ -473,13 +628,19 @@ app.whenReady().then(() => {
 
   const userData = app.getPath('userData');
   stores.todos = todoStore(path.join(userData, 'todos.json'), (v) => update('todos', v));
+  stores.stats = statsStore(path.join(userData, 'stats.json'), (v) => update('stats', v));
   stores.timer = timerStore(
     path.join(userData, 'timer.json'),
     (v) => {
       update('timer', v);
       if (sources.lockdown) refreshLockdown();
     },
-    () => emit({ type: 'timer-done' }),
+    (phase, ended, next) => {
+      if (phase === 'focus') stores.stats.completeFocus(Math.round(ended.total / 60e3));
+      if (next) emit({ type: 'phase', phase: next.phase, round: next.round, minutes: Math.round(next.total / 60e3) });
+      else emit({ type: 'timer-done' });
+    },
+    () => ({ focus: 25, break: 5, long: 15, every: 4, ...(config.pomodoro || {}) }),
   );
   refreshLockdown();
   stores.clipboard = clipboardWatcher(

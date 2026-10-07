@@ -7,7 +7,11 @@ A Nothing-style Dynamic Island for Windows. A black notch at the top of the scre
 - **Claude Code.** The notch pulses when a session needs you, and you can **Allow or Deny permission requests right from the notch** (the terminal prompt still works too, whichever you answer first wins). Also your open PRs with CI status and branches pushed without a PR.
 - **Focus + lockdown.** 5/15/25/50 minute timers. With lockdown on, Instagram, TikTok, X, Reddit and other distracting sites get their tab closed the moment you open them; YouTube and Spotify stay allowed. Distracting apps' notifications stay quiet too.
 - **Notifications.** Windows notifications (Discord, WhatsApp, anything) peek in the notch. If your phone is linked with Phone Link, **2FA codes** texted to your phone pop up big with a Copy button, and **incoming calls** ring in the notch.
-- **To-do list, clipboard history** (memory only; things that look like passwords are masked), battery notices, accent colours, one notch on every screen, and **Ctrl+Alt+Space** to keep it open.
+- **Pomodoro + streaks.** Focus/break cycles that run on their own (long break every few rounds), a daily streak, and **screen time** per site/app as a dot graph (labels only, never page titles).
+- **School.** Homework due dates from ManageBac / Google Classroom calendar links, and countdowns ("31 days to exam" events are picked up automatically).
+- **Quick launcher.** Ctrl+Alt+Space, then type: apps from the Start menu, Desktop files, websites. `? question` asks Claude (Opus 5.5, needs your API key, stored encrypted), `n …` saves a note to your Obsidian vault, `t …` adds a to-do.
+- **Share the song** (a song.link page that opens in Spotify and everywhere else), **mic/camera dots** next to the notch like a phone, and an optional **sleep reminder**.
+- **To-do list, clipboard history** (memory only; things that look like passwords are masked), battery notices, accent colours, one notch on every screen, and a full **Settings window** (click the tray icon).
 
 ## Install
 

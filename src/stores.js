@@ -43,7 +43,22 @@ function todoStore(file, onChange) {
   };
 }
 
-function timerStore(file, onChange, onDone) {
+/** Pomodoro phase after `phase` finishes. */
+function nextPhase(timer, p) {
+  if (timer.phase === 'focus') {
+    const long = timer.round % p.every === 0;
+    return { phase: long ? 'long' : 'break', round: timer.round, minutes: long ? p.long : p.break };
+  }
+  return { phase: 'focus', round: timer.round + 1, minutes: p.focus };
+}
+
+/**
+ * Focus timer. Plain mode runs once; pomodoro mode cycles focus -> break (a long break
+ * every N rounds) until stopped. Lockdown only applies during focus phases.
+ * getPomodoro() -> { focus, break, long, every } in minutes.
+ * onDone(phaseThatEnded, timerThatEnded, nextTimerOrNull)
+ */
+function timerStore(file, onChange, onDone, getPomodoro) {
   let timer = null;
   try {
     const t = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -61,23 +76,35 @@ function timerStore(file, onChange, onDone) {
     onChange(timer);
   };
   onChange(timer);
+  const make = (minutes, extra) => {
+    const ms = Math.max(1, Math.min(240, Number(minutes) || 25)) * 60e3;
+    return { end: Date.now() + ms, total: ms, ...extra };
+  };
   const tick = setInterval(() => {
-    if (timer && Date.now() >= timer.end) {
-      timer = null;
-      save();
-      onDone();
-    }
+    if (!timer || Date.now() < timer.end) return;
+    const ended = timer;
+    if (ended.mode === 'pomodoro') {
+      const n = nextPhase(ended, getPomodoro());
+      timer = make(n.minutes, { mode: 'pomodoro', phase: n.phase, round: n.round, lockdown: ended.lockdown });
+    } else timer = null;
+    save();
+    onDone(ended.phase || 'focus', ended, timer);
   }, 500);
   return {
-    start(minutes, lockdown) {
-      const ms = Math.max(1, Math.min(240, Number(minutes) || 25)) * 60e3;
-      timer = { end: Date.now() + ms, total: ms, lockdown: lockdown !== false };
+    start(minutes, lockdown, mode) {
+      if (mode === 'pomodoro') {
+        const p = getPomodoro();
+        timer = make(p.focus, { mode: 'pomodoro', phase: 'focus', round: 1, lockdown: lockdown !== false });
+      } else timer = make(minutes, { mode: 'timer', phase: 'focus', lockdown: lockdown !== false });
       save();
     },
     add(minutes) {
       if (!timer) return this.start(minutes);
       timer = { ...timer, end: timer.end + minutes * 60e3, total: timer.total + minutes * 60e3 };
       save();
+    },
+    skip() {
+      if (timer) timer = { ...timer, end: Date.now() };
     },
     setLockdown(on) {
       if (!timer) return;
@@ -89,6 +116,43 @@ function timerStore(file, onChange, onDone) {
       save();
     },
     stopTicking: () => clearInterval(tick),
+  };
+}
+
+/** Completed focus sessions per day, and the current streak of days with at least one. */
+function statsStore(file, onChange) {
+  let days = {};
+  try {
+    days = JSON.parse(fs.readFileSync(file, 'utf8')).days || {};
+  } catch {
+    days = {};
+  }
+  const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const summary = (now = new Date()) => {
+    let streak = 0;
+    const d = new Date(now);
+    // Today counts if you've done one; otherwise the streak is still alive from yesterday.
+    if (!days[key(d)]) d.setDate(d.getDate() - 1);
+    while (days[key(d)]) {
+      streak++;
+      d.setDate(d.getDate() - 1);
+    }
+    return { today: days[key(now)] || 0, streak, minutesToday: Math.round((days[`${key(now)}:min`] || 0)) };
+  };
+  onChange(summary());
+  return {
+    completeFocus(minutes) {
+      const k = key(new Date());
+      days[k] = (days[k] || 0) + 1;
+      days[`${k}:min`] = (days[`${k}:min`] || 0) + minutes;
+      try {
+        fs.writeFileSync(file, JSON.stringify({ days }));
+      } catch {
+        // stats are best-effort
+      }
+      onChange(summary());
+    },
+    summary,
   };
 }
 
@@ -141,4 +205,4 @@ function clipboardWatcher(clipboard, onChange, onCopied) {
   };
 }
 
-module.exports = { todoStore, timerStore, clipboardWatcher, looksSecret };
+module.exports = { todoStore, timerStore, statsStore, nextPhase, clipboardWatcher, looksSecret };

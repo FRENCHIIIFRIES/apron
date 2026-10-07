@@ -37,6 +37,15 @@ const DEFAULTS = {
   peek: true, // widen the notch briefly when the song changes
   units: 'c', // 'c' or 'f'
   claudeApprovals: true, // Allow/Deny permission requests from the notch
+  pomodoro: { focus: 25, break: 5, long: 15, every: 4 },
+  homeworkUrls: [], // ManageBac / Classroom calendar feeds (iCal)
+  countdowns: [], // [{ title, date: 'YYYY-MM-DD' }]
+  notesFile: '', // empty = "Apron Inbox.md" in your Obsidian vault
+  sleepReminder: false,
+  bedtime: '23:00',
+  screenTime: true,
+  privacyDots: true,
+  aiKeyEnc: '', // Anthropic API key, encrypted with Windows' DPAPI (safeStorage)
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;

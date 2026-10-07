@@ -52,8 +52,10 @@ async function action(name, message) {
 const section = (title, ...items) => h('section', {}, h('h2', {}, title), ...items);
 const label = (title, sub) => h('div', { class: 'label' }, h('b', {}, title), sub && h('small', {}, sub));
 
+const DEFAULT_OFF = new Set(['artColor', 'sleepReminder']);
 function toggle(title, sub, key, { invert = false } = {}) {
-  const value = invert ? snap.config[key] === false : snap.config[key] !== false;
+  const on = DEFAULT_OFF.has(key) ? snap.config[key] === true : snap.config[key] !== false;
+  const value = invert ? !on : on;
   return h(
     'div',
     { class: 'item' },
@@ -215,6 +217,7 @@ function focus() {
   return section(
     'Focus & lockdown',
     toggle('Lockdown on by default', 'New focus timers close distracting sites', 'lockdownDefault'),
+    pomodoroRow(),
     h(
       'div',
       { class: 'item stack' },
@@ -239,6 +242,129 @@ function focus() {
     chipEditor('Also block', 'Any word in the tab title, e.g. chess.com or Amazon', ld.extraSites, (s) => setLd({ extraSites: ld.extraSites.filter((x) => x !== s) }), (s) => setLd({ extraSites: [...ld.extraSites, s] }, `${s} blocked`), 'Add a site'),
     chipEditor('Always allow', 'Wins over anything blocked', ld.allowSites, (s) => setLd({ allowSites: ld.allowSites.filter((x) => x !== s) }), (s) => setLd({ allowSites: [...ld.allowSites, s] }, `${s} allowed`), 'Add a site'),
     chipEditor('Minimise these apps', 'Program names, e.g. RobloxPlayerBeta.exe or Steam.exe', ld.apps, (s) => setLd({ apps: ld.apps.filter((x) => x !== s) }), (s) => setLd({ apps: [...ld.apps, s] }), 'Add an app'),
+  );
+}
+
+function pomodoroRow() {
+  const p = { focus: 25, break: 5, long: 15, every: 4, ...(snap.config.pomodoro || {}) };
+  const field = (key, label, min, max) =>
+    h(
+      'label',
+      { class: 'mini' },
+      h('input', {
+        type: 'number',
+        min,
+        max,
+        value: p[key],
+        class: 'num',
+        onchange: (e) => set({ pomodoro: { ...p, [key]: Number(e.target.value) } }),
+      }),
+      h('small', {}, label),
+    );
+  return h(
+    'div',
+    { class: 'item stack' },
+    label('Pomodoro', 'Focus and break lengths in minutes; a long break every few rounds'),
+    h('div', { class: 'row-line' }, field('focus', 'focus', 5, 120), field('break', 'break', 1, 30), field('long', 'long break', 5, 60), field('every', 'rounds', 2, 8)),
+  );
+}
+
+function schoolSection() {
+  const c = snap.config;
+  const mask = (u) => {
+    try {
+      const url = new URL(u);
+      return `${url.hostname} · …${url.pathname.slice(-10)}`;
+    } catch {
+      return u.slice(0, 30);
+    }
+  };
+  const hwInput = h('input', { class: 'text', placeholder: 'ManageBac / Classroom calendar link (https://…)' });
+  const addHw = () => {
+    let v = hwInput.value.trim().replace(/^webcal:\/\//i, 'https://');
+    if (!v) return;
+    if (!/^https:\/\//.test(v)) return toast('That needs to be an https:// or webcal:// link');
+    set({ homeworkUrls: [...(c.homeworkUrls || []), v] }, 'Homework feed added');
+  };
+  hwInput.addEventListener('keydown', (e) => e.key === 'Enter' && addHw());
+
+  const cdTitle = h('input', { class: 'text', placeholder: 'What (e.g. IB exams)' });
+  const cdDate = h('input', { class: 'text date', type: 'date' });
+  const addCd = () => {
+    if (!cdTitle.value.trim() || !cdDate.value) return toast('Add a name and a date');
+    set({ countdowns: [...(c.countdowns || []), { title: cdTitle.value.trim(), date: cdDate.value }] }, 'Countdown added');
+  };
+
+  return section(
+    'School',
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Homework due dates', 'ManageBac: Calendar → Subscribe (copy the link). Classroom: its Google Calendar → Settings → Secret address.'),
+      (c.homeworkUrls || []).length
+        ? h('div', { class: 'chips' }, ...c.homeworkUrls.map((u) => h('span', { class: 'chip' }, mask(u), h('button', { class: 'x', title: 'Remove', onclick: () => set({ homeworkUrls: c.homeworkUrls.filter((x) => x !== u) }) }, '×'))))
+        : null,
+      h('div', { class: 'row-line' }, hwInput, h('button', { class: 'btn', onclick: addHw }, 'Add')),
+    ),
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Countdowns', '"31 days to exam" style calendar events are picked up automatically too'),
+      (c.countdowns || []).length
+        ? h('div', { class: 'chips' }, ...c.countdowns.map((cd) => h('span', { class: 'chip' }, `${cd.title} · ${cd.date}`, h('button', { class: 'x', title: 'Remove', onclick: () => set({ countdowns: c.countdowns.filter((x) => x !== cd) }) }, '×'))))
+        : null,
+      h('div', { class: 'row-line' }, cdTitle, cdDate, h('button', { class: 'btn', onclick: addCd }, 'Add')),
+    ),
+  );
+}
+
+function notesAiSection() {
+  const c = snap.config;
+  const pathInput = h('input', { class: 'text', value: c.notesFile || '', placeholder: 'Leave empty to use your Obsidian vault' });
+  const savePath = () => pathInput.value.trim() !== (c.notesFile || '') && set({ notesFile: pathInput.value }, 'Notes location saved');
+  pathInput.addEventListener('keydown', (e) => e.key === 'Enter' && savePath());
+  pathInput.addEventListener('blur', savePath);
+
+  const keyInput = h('input', { class: 'text', type: 'password', placeholder: snap.hasAiKey ? '•••••••• saved (paste to replace)' : 'sk-ant-…', autocomplete: 'off' });
+  const saveKey = async () => {
+    const v = keyInput.value.trim();
+    if (!v) return;
+    const res = await window.apron.set({ aiKey: v });
+    if (res && res.ok === false) return toast(res.error);
+    snap = res;
+    render();
+    toast('Key saved (encrypted)');
+  };
+  keyInput.addEventListener('keydown', (e) => e.key === 'Enter' && saveKey());
+
+  return section(
+    'Launcher, notes & AI',
+    h('div', { class: 'item' }, label('Quick launcher', 'Ctrl+Alt+Space, then type an app or site. "n …" saves a note, "t …" adds a to-do, "? …" asks Claude.')),
+    h('div', { class: 'item stack' }, label('Notes go to', snap.notesTarget), h('div', { class: 'row-line' }, pathInput, h('button', { class: 'btn', onclick: savePath }, 'Save'))),
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Anthropic API key', 'For "? …" questions (Claude Opus 5.5). Get one at console.anthropic.com. Stored encrypted on this PC.'),
+      h(
+        'div',
+        { class: 'row-line' },
+        keyInput,
+        h('button', { class: 'btn primary', onclick: saveKey }, 'Save'),
+        snap.hasAiKey ? h('button', { class: 'btn danger', onclick: () => set({ aiKey: '' }, 'Key removed') }, 'Remove') : null,
+      ),
+    ),
+  );
+}
+
+function wellbeingSection() {
+  const c = snap.config;
+  const bed = h('input', { class: 'text date', type: 'time', value: c.bedtime || '23:00', onchange: (e) => set({ bedtime: e.target.value }, 'Bedtime saved') });
+  return section(
+    'Wellbeing & privacy',
+    toggle('Sleep reminder', 'A heads-up 30 minutes before bed, then a nudge every 20 minutes after', 'sleepReminder'),
+    h('div', { class: 'item' }, label('Bedtime', null), bed),
+    toggle('Screen time', 'Counts time per site/app on this PC (labels only, never page titles)', 'screenTime'),
+    toggle('Mic & camera dots', 'Orange dot = mic in use, green = camera, next to the notch', 'privacyDots'),
   );
 }
 
@@ -292,7 +418,7 @@ function render() {
   document.documentElement.style.setProperty('--accent', snap.config.accent);
   document.getElementById('version').textContent = `Settings · v${snap.version}`;
   const scroll = window.scrollY;
-  root.replaceChildren(appearance(), music(), calendarWeather(), focus(), alerts(), claudeSection(), general());
+  root.replaceChildren(appearance(), music(), calendarWeather(), schoolSection(), focus(), notesAiSection(), alerts(), wellbeingSection(), claudeSection(), general());
   window.scrollTo(0, scroll);
 }
 
@@ -304,6 +430,6 @@ window.apron.get().then((s) => {
 // Changes from elsewhere (tray, notch, config file). Don't rebuild under someone typing.
 window.apron.onChanged((s) => {
   snap = s;
-  const typing = document.activeElement && document.activeElement.classList.contains('text');
+  const typing = document.activeElement && (document.activeElement.classList.contains('text') || document.activeElement.classList.contains('num'));
   if (!typing) render();
 });

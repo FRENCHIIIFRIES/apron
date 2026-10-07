@@ -646,3 +646,86 @@ button {
 
 .gear { flex: none; margin-left: 6px; color: var(--muted); font-size: 14px; line-height: 1; }
 .gear:hover { color: var(--fg); }
+
+/* ---------- v0.5: launcher, ask, pomodoro, screen time, countdowns, privacy dots ---------- */
+
+/* launcher replaces the tabs while open */
+.launcher { display: none; flex-direction: column; gap: 8px; flex: 1; min-height: 0; }
+#island.launching .launcher { display: flex; }
+#island.launching .tabs,
+#island.launching .swatches,
+#island.launching .panel { display: none !important; }
+#launch-input {
+  width: 100%;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--row);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--fg);
+  font: 13px var(--mono);
+  outline: none;
+}
+#launch-input::placeholder { color: var(--muted); font-size: 11px; }
+.launch-results { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.lr { display: flex; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 12px; cursor: pointer; }
+.lr:hover { background: var(--row); }
+.lr.sel { background: var(--faint); }
+.lr-glyph { width: 16px; text-align: center; color: var(--accent); }
+.lr-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 700; }
+.lr-hint { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+
+.answer { display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; padding: 2px 6px; }
+.answer-q { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.answer-text { flex: 1; min-height: 0; overflow-y: auto; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; user-select: text; }
+.answer.err .answer-text { color: var(--accent); }
+.answer-meta { color: var(--muted); font-size: 10px; }
+
+/* focus tab: pomodoro + streak + screen time */
+.timer { overflow-y: auto; justify-content: flex-start; padding-top: 6px; }
+.timer-big { font-size: 52px; }
+.glyph.resting svg { fill: #3ddc84; }
+.stats-line { color: var(--muted); font-size: 10.5px; }
+.screentime { width: 100%; padding: 4px 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.st-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.st-label { width: 92px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-bar { flex: 1; height: 6px; background: radial-gradient(circle, var(--faint) 1.5px, transparent 1.8px) 0 0 / 6px 6px; }
+.st-bar i { display: block; height: 100%; background: radial-gradient(circle, var(--fg) 1.5px, transparent 1.8px) 0 0 / 6px 6px; }
+.st-row.bad .st-bar i { background-image: radial-gradient(circle, var(--accent) 1.5px, transparent 1.8px); }
+.st-row.bad .st-label { color: var(--accent); }
+.st-time { width: 52px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* calendar: exam countdowns */
+.countdowns { display: flex; gap: 6px; padding: 2px 4px 4px; }
+.countdown {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 12px;
+  background: var(--row);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.cd-days { font-family: var(--dotted); font-weight: 800; font-size: 22px; line-height: 1; color: var(--accent); }
+.cd-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* music: share */
+.share-btn {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--faint);
+}
+.share-btn:hover { box-shadow: inset 0 0 0 1px var(--fg); }
+
+/* mic / camera in use: dots just right of the notch, like a phone */
+.priv { position: absolute; top: 13px; right: -28px; display: flex; gap: 4px; pointer-events: none; }
+.priv i { width: 8px; height: 8px; border-radius: 50%; animation: privpulse 2s ease-in-out infinite; }
+.priv i.cam { background: #3ddc84; box-shadow: 0 0 8px #3ddc84; }
+.priv i.mic { background: #ff9f0a; box-shadow: 0 0 8px #ff9f0a; }
+@keyframes privpulse { 50% { opacity: 0.55; } }
