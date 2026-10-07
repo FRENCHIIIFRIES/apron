@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('island', {
   open: (url) => ipcRenderer.send('island:open', url),
   openConfig: () => ipcRenderer.send('island:open-config'),
   setAccent: (hex) => ipcRenderer.send('island:accent', hex),
+  setArtColor: (on) => ipcRenderer.send('island:art-color', Boolean(on)),
 });

@@ -14,7 +14,11 @@ const WIN_H = 320;
 let win = null;
 let tray = null;
 let config = loadConfig();
-const state = { calendar: null, media: null, claude: [], github: null, settings: { accent: config.accent } };
+function settingsPayload() {
+  return { accent: config.accent, artColor: Boolean(config.artColor) };
+}
+
+const state = { calendar: null, media: null, claude: [], github: null, settings: settingsPayload() };
 
 const ACCENTS = [
   ['Nothing red', '#d71921'],
@@ -98,7 +102,14 @@ function setAccent(hex) {
   if (!HEX.test(hex)) return;
   config.accent = hex.toLowerCase();
   saveConfig({ accent: config.accent });
-  update('settings', { accent: config.accent });
+  update('settings', settingsPayload());
+  rebuildTray();
+}
+
+function setArtColor(on) {
+  config.artColor = Boolean(on);
+  saveConfig({ artColor: config.artColor });
+  update('settings', settingsPayload());
   rebuildTray();
 }
 
@@ -115,6 +126,12 @@ function rebuildTray() {
           checked: config.accent === hex,
           click: () => setAccent(hex),
         })),
+      },
+      {
+        label: 'Colour album art',
+        type: 'checkbox',
+        checked: Boolean(config.artColor),
+        click: (item) => setArtColor(item.checked),
       },
       { label: 'Open config', click: () => shell.openPath(CONFIG_PATH) },
       {
@@ -152,7 +169,7 @@ function watchConfig() {
         stopSources();
         startSources();
       }
-      if (prev.accent !== config.accent) update('settings', { accent: config.accent });
+      if (prev.accent !== config.accent || prev.artColor !== config.artColor) update('settings', settingsPayload());
       if (prev.startWithWindows !== config.startWithWindows) applyLoginItem();
       rebuildTray();
       place();
@@ -195,6 +212,7 @@ ipcMain.on('island:media', (_e, cmd) => sources.media && sources.media.command(c
 ipcMain.on('island:open', (_e, url) => isSafeUrl(url) && shell.openExternal(url));
 ipcMain.on('island:open-config', () => shell.openPath(CONFIG_PATH));
 ipcMain.on('island:accent', (_e, hex) => setAccent(String(hex)));
+ipcMain.on('island:art-color', (_e, on) => setArtColor(on === true));
 
 app.whenReady().then(() => {
   createWindow();

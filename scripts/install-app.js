@@ -66,7 +66,8 @@ async function main() {
     "Get-Process Island, island-media -ErrorAction SilentlyContinue | Stop-Process -Force; " +
       `Get-Process electron -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '${ROOT.replace(/'/g, "''")}*' } | Stop-Process -Force; Start-Sleep -Milliseconds 800`,
   );
-  fs.rmSync(INSTALL_DIR, { recursive: true, force: true });
+  // Windows releases the old exe's files a moment after the process exits.
+  fs.rmSync(INSTALL_DIR, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
   fs.cpSync(out, INSTALL_DIR, { recursive: true });
 
   fs.mkdirSync(USER_DATA, { recursive: true });

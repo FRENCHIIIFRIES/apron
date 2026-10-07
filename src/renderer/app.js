@@ -675,6 +675,25 @@ customInput.addEventListener('input', () => applyAccent(customInput.value));
 customInput.addEventListener('change', () => pickAccent(customInput.value));
 $('#swatch-toggle').addEventListener('click', () => swatchesEl.classList.toggle('open'));
 
+// Album art: Nothing-style black & white, or its real colours.
+const artToggle = $('#art-toggle');
+function applyArtColor(on) {
+  document.documentElement.classList.toggle('art-color', on);
+  artToggle.textContent = on ? 'Art: Colour' : 'Art: B&W';
+  artToggle.classList.toggle('on', on);
+}
+artToggle.addEventListener('click', () => {
+  const on = !document.documentElement.classList.contains('art-color');
+  applyArtColor(on);
+  window.island.setArtColor(on);
+});
+
+function applySettings(s) {
+  if (!s) return;
+  applyAccent(s.accent);
+  applyArtColor(Boolean(s.artColor));
+}
+
 // ---------- tabs + expand/collapse ----------
 
 function renderTabs() {
@@ -778,7 +797,7 @@ window.island.onUpdate((key, value) => {
   const volumeOnly =
     key === 'media' && state.media && value && JSON.stringify({ ...value, volume: 0, muted: 0 }) === JSON.stringify({ ...state.media, volume: 0, muted: 0 });
   state[key] = value;
-  if (key === 'settings') applyAccent(value.accent);
+  if (key === 'settings') applySettings(value);
   if (volumeOnly) {
     if (state.expanded && state.tab === 'media') updateVolume();
     return;
@@ -787,7 +806,7 @@ window.island.onUpdate((key, value) => {
 });
 window.island.getState().then((s) => {
   Object.assign(state, s);
-  if (s.settings) applyAccent(s.settings.accent);
+  applySettings(s.settings);
   if (s.media) onMedia(s.media);
   render();
 });

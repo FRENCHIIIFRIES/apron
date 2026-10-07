@@ -25,6 +25,7 @@ const DEFAULTS = {
   githubRefreshSeconds: 60,
   accent: '#d71921',
   startWithWindows: true,
+  artColor: false,
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;
@@ -42,6 +43,7 @@ function loadConfig() {
   config.icalUrls = config.icalUrls.filter((u) => typeof u === 'string' && u.trim());
   if (!HEX.test(config.accent)) config.accent = DEFAULTS.accent;
   config.accent = config.accent.toLowerCase();
+  config.artColor = config.artColor === true;
   return config;
 }
 
