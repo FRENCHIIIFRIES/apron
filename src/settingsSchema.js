@@ -2,7 +2,8 @@
 // Anything not listed here (or that fails validation) is ignored.
 
 const HEX = /^#[0-9a-f]{6}$/i;
-const WIDGETS = ['music', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system', 'stats', 'plan', 'clip'];
+const WIDGETS = ['music', 'apps', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system', 'stats', 'plan', 'clip'];
+const TABS = ['home', 'media', 'calendar', 'claude', 'timer', 'todo', 'clip', 'sys'];
 const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 const int = (min, max) => (v) => (Number.isFinite(Number(v)) ? Math.max(min, Math.min(max, Math.round(Number(v)))) : undefined);
 const oneOf = (...opts) => (v) => (opts.includes(v) ? v : undefined);
@@ -77,6 +78,16 @@ const SCHEMA = {
   translateCopies: bool,
   spotifyClientId: (v) => (typeof v === 'string' && /^[0-9a-f]{0,64}$/i.test(v.trim()) ? v.trim() : undefined),
   flashcardsFolder: text(400),
+  notchShow: oneOf('auto', 'rotate', 'music', 'next', 'weather', 'due', 'todo', 'prs', 'system', 'countdown', 'clock'),
+  dockOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((t) => TABS.includes(t)))] : undefined),
+  dockHidden: (v) => (Array.isArray(v) ? [...new Set(v.filter((t) => TABS.includes(t) && t !== 'home'))] : undefined),
+  pinnedApps: (v) =>
+    Array.isArray(v)
+      ? v
+          .filter((a) => a && typeof a.name === 'string' && typeof a.path === 'string' && a.path.length <= 400)
+          .map((a) => ({ name: a.name.slice(0, 80), path: a.path }))
+          .slice(0, 16)
+      : undefined,
   homeWidgets: (v) => (Array.isArray(v) ? [...new Set(v.filter((w) => typeof w === 'string' && WIDGETS.includes(w)))] : undefined),
   lockdown: (v) => {
     if (!v || typeof v !== 'object') return undefined;
@@ -102,4 +113,4 @@ function sanitize(patch) {
   return out;
 }
 
-module.exports = { sanitize, SCHEMA, WIDGETS };
+module.exports = { sanitize, SCHEMA, WIDGETS, TABS };

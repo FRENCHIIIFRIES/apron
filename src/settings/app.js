@@ -394,7 +394,9 @@ function guide() {
   const k = snap.launcherShortcut || 'Ctrl+Alt+Space';
   const rows = [
     ['Open it', 'Hover the notch at the top of the screen. You land on Home; the icons along the top switch views.'],
-    ['Home screen', 'Widgets for music, next class, weather, homework, focus, to-dos, Claude and system. Click one to open it. Pick which ones show below in "Home screen".'],
+    ['Home screen', 'Widgets for music, your apps, next class, weather, homework, focus, to-dos, Claude and system. Click one to open it. Drag widgets (and the dock icons) to rearrange them.'],
+    ['Closed notch', 'Choose what it keeps showing below (no more cycling). Or right-click a widget on Home → it stays in the notch.'],
+    ['Quick apps', 'Pin apps with 📌 in the launcher or below; they appear as icons on Home and when you open the launcher. Right-click an icon to unpin.'],
     ['Search & launcher', `${k} (or ⌕ in the notch). Type an app, file or website and press Enter. Anything else searches Google.`],
     ['Ask AI (Gemini)', 'In the launcher type  ? your question . To ask about what is on your screen, type  ?? what does this graph show . Needs your free Gemini key (Launcher, notes & AI below).'],
     ['Notes, to-dos, translate', 'In the launcher:  n buy graph paper  saves a note,  t maths homework  adds a to-do,  tr नमस्ते  translates.'],
@@ -406,10 +408,146 @@ function guide() {
   return section('How to use', ...rows.map(([t, d]) => h('div', { class: 'item' }, label(t, d))));
 }
 
+// ---------- closed notch, dock, quick apps ----------
+
+const NOTCH_OPTIONS = [
+  ['auto', 'Auto', 'Song while music plays, otherwise your next class, otherwise the clock'],
+  ['music', 'Music', ''],
+  ['next', 'Next class', ''],
+  ['weather', 'Weather', ''],
+  ['due', 'Homework due', ''],
+  ['todo', 'To-do', ''],
+  ['prs', 'Claude & PRs', ''],
+  ['system', 'System', ''],
+  ['countdown', 'Countdown', ''],
+  ['clock', 'Clock', ''],
+  ['rotate', 'Rotate', 'Cycles through everything'],
+];
+
+function notchSection() {
+  const cur = snap.config.notchShow || 'auto';
+  const desc = (NOTCH_OPTIONS.find((o) => o[0] === cur) || [])[2] || 'Always shows this (falls back to the clock if there is nothing to show)';
+  return section(
+    'Closed notch',
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Show', `${desc}. Alerts (Claude needs you, calls, codes, timers) still pop up. Tip: right-click a widget on Home to pick it.`),
+      h('div', { class: 'chips' }, ...NOTCH_OPTIONS.map(([id, name]) => h('button', { class: `chip${cur === id ? ' blocked' : ''}`, onclick: () => set({ notchShow: id }, `Notch: ${name}`) }, name))),
+    ),
+  );
+}
+
+const TAB_LABELS = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude Code', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System' };
+
+function dockSection() {
+  const order = (snap.config.dockOrder && snap.config.dockOrder.length ? snap.config.dockOrder : Object.keys(TAB_LABELS)).filter((t) => TAB_LABELS[t]);
+  for (const t of Object.keys(TAB_LABELS)) if (!order.includes(t)) order.push(t);
+  const hidden = new Set(snap.config.dockHidden || []);
+  const move = (i, d) => {
+    const list = [...order];
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    set({ dockOrder: list });
+  };
+  return section(
+    'Dock icons',
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Order and visibility', 'You can also drag the icons in the notch. Hidden ones are still in Settings here.'),
+      h(
+        'div',
+        { class: 'widget-list' },
+        ...order.map((t, i) =>
+          h(
+            'div',
+            { class: `wl-row${hidden.has(t) ? ' off' : ''}` },
+            h('span', { class: 'wl-name' }, TAB_LABELS[t]),
+            h('button', { class: 'x', title: 'Move up', onclick: () => move(i, -1) }, '↑'),
+            h('button', { class: 'x', title: 'Move down', onclick: () => move(i, 1) }, '↓'),
+            t === 'home'
+              ? h('span', { class: 'x' }, '')
+              : h(
+                  'button',
+                  { class: 'x', title: hidden.has(t) ? 'Show' : 'Hide', onclick: () => set({ dockHidden: hidden.has(t) ? [...hidden].filter((x) => x !== t) : [...hidden, t] }) },
+                  hidden.has(t) ? '○' : '●',
+                ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function appsSection() {
+  const pinned = snap.config.pinnedApps || [];
+  const results = h('div', { class: 'chips' });
+  const input = h('input', { class: 'text', placeholder: 'Search your apps (e.g. Spotify, Chrome, Word)' });
+  let seq = 0;
+  input.addEventListener('input', async () => {
+    const my = ++seq;
+    const found = input.value.trim() ? await window.apron.searchApps(input.value) : [];
+    if (my !== seq) return;
+    results.replaceChildren(
+      ...found.map((r) =>
+        h(
+          'button',
+          {
+            class: 'chip',
+            onclick: async () => {
+              snap = await window.apron.pin(r.path);
+              input.value = '';
+              render();
+              toast(`${r.title} pinned`);
+            },
+          },
+          `+ ${r.title}`,
+        ),
+      ),
+    );
+  });
+  const move = (i, d) => {
+    const list = [...pinned];
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    set({ pinnedApps: list });
+  };
+  return section(
+    'Quick apps',
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Pinned apps', 'One click from the Apps widget on Home and from the launcher. You can also pin with 📌 in the launcher, drag to reorder, and right-click to unpin.'),
+      pinned.length
+        ? h(
+            'div',
+            { class: 'widget-list' },
+            ...pinned.map((a, i) =>
+              h(
+                'div',
+                { class: 'wl-row' },
+                h('span', { class: 'wl-name' }, a.name),
+                h('button', { class: 'x', title: 'Move up', onclick: () => move(i, -1) }, '↑'),
+                h('button', { class: 'x', title: 'Move down', onclick: () => move(i, 1) }, '↓'),
+                h('button', { class: 'x', title: 'Unpin', onclick: () => set({ pinnedApps: pinned.filter((x) => x.path !== a.path) }) }, '×'),
+              ),
+            ),
+          )
+        : null,
+      h('div', { class: 'row-line' }, input),
+      results,
+    ),
+  );
+}
+
 // ---------- home screen widgets ----------
 
 const WIDGET_INFO = {
   music: 'Now playing (wide)',
+  apps: 'Quick apps (wide)',
   next: 'Next class / countdown',
   weather: 'Weather',
   due: 'Homework due',
@@ -608,7 +746,7 @@ function render() {
   document.documentElement.style.setProperty('--accent', snap.config.accent);
   document.getElementById('version').textContent = `Settings · v${snap.version}`;
   const scroll = window.scrollY;
-  root.replaceChildren(guide(), homeSection(), appearance(), music(), calendarWeather(), schoolSection(), classSection(), focus(), notesAiSection(), extrasSection(), alerts(), wellbeingSection(), claudeSection(), general());
+  root.replaceChildren(guide(), notchSection(), homeSection(), appsSection(), dockSection(), appearance(), music(), calendarWeather(), schoolSection(), classSection(), focus(), notesAiSection(), extrasSection(), alerts(), wellbeingSection(), claudeSection(), general());
   window.scrollTo(0, scroll);
 }
 
@@ -621,5 +759,6 @@ window.apron.get().then((s) => {
 window.apron.onChanged((s) => {
   snap = s;
   const typing = document.activeElement && (document.activeElement.classList.contains('text') || document.activeElement.classList.contains('num'));
+  // (the app search box keeps its results while typing too)
   if (!typing) render();
 });

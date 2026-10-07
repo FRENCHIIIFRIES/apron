@@ -57,7 +57,11 @@ const DEFAULTS = {
   spotifyClientId: '',
   spotifyRefreshEnc: '',
   flashcardsFolder: '', // empty = your Obsidian vault
-  homeWidgets: ['music', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system'],
+  homeWidgets: ['music', 'apps', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system'],
+  dockOrder: ['home', 'media', 'calendar', 'claude', 'timer', 'todo', 'clip', 'sys'],
+  dockHidden: [],
+  notchShow: 'auto', // closed notch: 'auto', 'rotate', or one thing ('music', 'next', 'weather', 'clock', ...)
+  pinnedApps: [], // [{ name, path }] from the Start menu / Desktop
 };
 
 const HEX = /^#[0-9a-f]{6}$/i;

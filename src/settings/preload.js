@@ -5,4 +5,6 @@ contextBridge.exposeInMainWorld('apron', {
   set: (patch) => ipcRenderer.invoke('settings:set', patch),
   action: (name) => ipcRenderer.invoke('settings:action', name),
   onChanged: (cb) => ipcRenderer.on('settings:changed', (_e, snap) => cb(snap)),
+  searchApps: (q) => ipcRenderer.invoke('settings:search-apps', String(q)),
+  pin: (path) => ipcRenderer.invoke('settings:pin', String(path)),
 });

@@ -873,3 +873,38 @@ button {
 .widget { gap: 4px; }
 .widget > .w-big { margin-top: auto; }
 .w-music .w-row { margin-top: 2px; }
+
+/* ---------- v0.7: quick apps, drag to reorder ---------- */
+
+.app-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; flex: 1; align-items: center; }
+.app-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 2px;
+  border-radius: 12px;
+  min-width: 0;
+  transition: background 0.15s, transform 0.1s;
+}
+.app-tile:hover { background: var(--faint); }
+.app-tile:active { transform: scale(0.92); }
+.app-tile img { width: 28px; height: 28px; object-fit: contain; }
+.app-letter { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; background: var(--faint); font-weight: 700; }
+.app-name { font-size: 9px; color: var(--muted); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-tile.small { flex-direction: row; gap: 8px; padding: 6px 10px; background: var(--row); box-shadow: inset 0 0 0 1px var(--line); }
+.app-tile.small img, .app-tile.small .app-letter { width: 20px; height: 20px; }
+.app-tile.small .app-name { font-size: 11px; color: var(--fg); }
+.launch-apps { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 2px; }
+
+.lr-pin { opacity: 0; font-size: 12px; width: 24px; height: 24px; border-radius: 50%; filter: grayscale(1); transition: opacity 0.15s; }
+.lr:hover .lr-pin, .lr.sel .lr-pin { opacity: 0.8; }
+.lr-pin:hover { opacity: 1 !important; background: var(--faint); filter: none; }
+.lr-pin.pinned { opacity: 1; filter: none; }
+
+/* dragging */
+.dragging { opacity: 0.35; }
+.dock button[draggable="true"] { cursor: grab; }
+.widget[draggable="true"] { cursor: grab; }
+.widget[draggable="true"]:active { cursor: grabbing; }
+.dock button[hidden] { display: none; }

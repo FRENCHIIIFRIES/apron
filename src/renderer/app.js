@@ -37,6 +37,7 @@ const state = {
   flashcards: { count: 0 },
   classMode: false,
   card: null, // { q, a, flipped }
+  apps: [], // pinned apps: { name, path, icon }
   cardsMode: false,
 };
 const isPrimary = new URLSearchParams(location.search).get('primary') !== '0';
@@ -192,7 +193,21 @@ function compactView() {
   const events = (state.calendar && state.calendar.events) || [];
   const soon = events.find((e) => !e.allDay && e.start - now < SOON && e.start - now > 0);
 
-  // Music stays up while it plays; an imminent event takes turns with it.
+  // What you chose to keep in the closed notch. Only "rotate" cycles.
+  const mode = (state.settings && state.settings.notchShow) || 'auto';
+  if (mode !== 'rotate') {
+    const items = rotationItems(now, events, soon);
+    const pick = (id) => {
+      if (id === 'music') return isPlaying(m) ? musicItem(m) : null;
+      if (id === 'next') return items.find((i) => ['class', 'soon', 'next'].includes(i.id)) || null;
+      if (id === 'system') return systemItem();
+      return items.find((i) => i.id === id) || null;
+    };
+    if (mode === 'auto') return pick('music') || pick('next') || pick('clock');
+    return pick(mode) || pick('clock');
+  }
+
+  // Rotate: music stays up while it plays; an imminent event takes turns with it.
   if (isPlaying(m)) {
     const music = {
       id: 'music',
@@ -249,6 +264,29 @@ function fmtDue(ms, now = Date.now()) {
   if (days === 1) return 'tomorrow';
   if (days < 7) return new Date(ms).toLocaleDateString([], { weekday: 'short' });
   return `in ${days}d`;
+}
+
+function musicItem(m) {
+  return {
+    id: 'music',
+    tab: 'media',
+    lead: m.art ? h('img', { src: m.art, alt: '' }) : dot('done'),
+    text: m.artist ? `${m.title} · ${m.artist}` : m.title,
+    trail: h('span', { class: 'bars' }, h('i'), h('i'), h('i')),
+  };
+}
+
+function systemItem() {
+  const sy = state.sys;
+  const b = state.battery;
+  if (!sy) return null;
+  return {
+    id: 'system',
+    tab: 'sys',
+    lead: b ? batteryLead(b.level, b.charging) : dot(),
+    text: `CPU ${sy.cpu}% · RAM ${Math.round((sy.mem.used / sy.mem.total) * 100)}%`,
+    trail: b ? `${Math.round(b.level * 100)}%` : '',
+  };
 }
 
 function rotationItems(now, events, soon) {
@@ -1136,11 +1174,69 @@ const stop = (fn) => (e) => {
   fn(e);
 };
 
+// Right-click a widget to keep that thing in the closed notch.
+const WIDGET_TO_NOTCH = { music: 'music', next: 'next', weather: 'weather', due: 'due', todo: 'todo', claude: 'prs', system: 'system', focus: 'next', stats: 'clock' };
+const NOTCH_NAMES = { auto: 'Auto', music: 'Music', next: 'Next class', weather: 'Weather', due: 'Homework due', todo: 'To-do', prs: 'Claude & PRs', system: 'System', countdown: 'Countdown', clock: 'Clock', rotate: 'Rotate' };
+
 function widget(kind, tab, title, ...body) {
-  return h('div', { class: `widget w-${kind}`, onclick: open(tab) }, h('div', { class: 'w-title' }, title), ...body);
+  const base = kind.split(' ')[0];
+  return h(
+    'div',
+    {
+      class: `widget w-${kind}`,
+      onclick: open(tab),
+      oncontextmenu: (e) => {
+        e.preventDefault();
+        const mode = WIDGET_TO_NOTCH[base];
+        if (!mode) return;
+        window.island.setNotch(mode);
+        flash({ id: `notch:${Date.now()}`, lead: dot('done'), text: `Notch will show: ${NOTCH_NAMES[mode]}`, trail: '📌' }, 2500);
+      },
+    },
+    h('div', { class: 'w-title' }, title),
+    ...body,
+  );
+}
+
+function appTile(a, i, small) {
+  const tile = h(
+    'button',
+    {
+      class: `app-tile${small ? ' small' : ''}`,
+      title: `${a.name}${small ? '' : ' (drag to reorder, right-click to unpin)'}`,
+      draggable: small ? null : 'true',
+      onclick: stop(() => {
+        window.island.openApp(a.path);
+        if (state.launching) closeLauncher();
+      }),
+      oncontextmenu: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.island.unpin(a.path);
+      },
+    },
+    a.icon ? h('img', { src: a.icon, alt: '' }) : h('span', { class: 'app-letter' }, a.name.slice(0, 1)),
+    h('span', { class: 'app-name' }, a.name),
+  );
+  tile.dataset.path = a.path;
+  return tile;
 }
 
 const WIDGET_RENDER = {
+  apps() {
+    const apps = state.apps || [];
+    const w = widget(
+      'apps wide',
+      'home',
+      'Apps',
+      apps.length
+        ? h('div', { class: 'app-grid' }, ...apps.slice(0, 8).map((a, i) => appTile(a, i)))
+        : h('div', { class: 'w-sub' }, 'Pin apps: open the launcher (⌕), find an app, click 📌'),
+    );
+    const grid = w.querySelector('.app-grid');
+    if (grid) makeSortable(grid, '.app-tile', (el) => el.dataset.path, (order) => window.island.setOrder('apps', order));
+    return w;
+  },
   music() {
     const m = state.media;
     if (!m || !m.active || !m.title) return widget('music wide', 'media', 'Music', h('div', { class: 'w-big muted' }, 'Nothing playing'));
@@ -1268,10 +1364,56 @@ function sysBar(label, pct, text) {
   return h('div', { class: 'sys-bar' }, h('span', { class: 'sb-label' }, label), h('span', { class: 'st-bar' }, h('i', { style: `width:${Math.max(2, Math.min(100, pct))}%` })), h('span', { class: 'sb-val' }, text));
 }
 
+/**
+ * Drag-to-reorder inside `container`: children matching `selector` can be dragged onto
+ * each other; `key(el)` names an item and `onDone(order)` saves the new order.
+ */
+function makeSortable(container, selector, key, onDone) {
+  let dragging = null;
+  container.addEventListener('dragstart', (e) => {
+    const el = e.target.closest(selector);
+    if (!el || !container.contains(el)) return;
+    dragging = el;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', key(el));
+    e.stopPropagation();
+  });
+  container.addEventListener('dragover', (e) => {
+    if (!dragging) return;
+    const over = e.target.closest(selector);
+    e.preventDefault();
+    if (!over || over === dragging || !container.contains(over)) return;
+    const r = over.getBoundingClientRect();
+    const after = r.width > r.height * 1.5 ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+    over.parentNode.insertBefore(dragging, after ? over.nextSibling : over);
+  });
+  container.addEventListener('dragend', (e) => {
+    if (!dragging) return;
+    e.stopPropagation();
+    dragging.classList.remove('dragging');
+    dragging = null;
+    onDone([...container.querySelectorAll(selector)].map(key).filter(Boolean));
+  });
+}
+
 function renderHome() {
   const list = (state.settings && state.settings.homeWidgets) || DEFAULT_WIDGETS;
-  fill($('#home'), ...list.map((k) => WIDGET_RENDER[k] && WIDGET_RENDER[k]()), h('button', { class: 'widget add-widget', onclick: () => window.island.openSettings(), title: 'Choose widgets in Settings' }, '+'));
+  const home = $('#home');
+  fill(
+    home,
+    ...list.map((k) => {
+      const w = WIDGET_RENDER[k] && WIDGET_RENDER[k]();
+      if (w) {
+        w.dataset.w = k;
+        w.draggable = true;
+      }
+      return w;
+    }),
+    h('button', { class: 'widget add-widget', onclick: () => window.island.openSettings(), title: 'Choose widgets in Settings' }, '+'),
+  );
 }
+makeSortable($('#home'), '.widget[data-w]', (el) => el.dataset.w, (order) => window.island.setOrder('home', order));
 
 // The 1s tick only nudges numbers on the home screen (no rebuild under the cursor).
 function tickHome() {
@@ -1379,8 +1521,23 @@ function renderLaunchResults() {
         h('span', { class: 'lr-glyph' }, KIND_GLYPH[it.kind] || '•'),
         h('span', { class: 'lr-title' }, it.title),
         h('span', { class: 'lr-hint' }, it.hint),
+        it.kind === 'open' &&
+          h(
+            'button',
+            {
+              class: `lr-pin${(state.apps || []).some((a) => a.path === it.path) ? ' pinned' : ''}`,
+              title: 'Pin to Apps',
+              onclick: (ev) => {
+                ev.stopPropagation();
+                window.island.pin(it.path);
+              },
+            },
+            '📌',
+          ),
       ),
     ),
+    !launchItems.length && (state.apps || []).length ? h('div', { class: 'launch-apps' }, ...(state.apps || []).map((a, i) => appTile(a, i, true))) : null,
+    !launchItems.length && !(state.apps || []).length ? h('div', { class: 'empty small' }, 'Type to search. Pin apps with 📌 and they show up here for one-click access.') : null,
   );
 }
 
@@ -1414,7 +1571,7 @@ function openLauncher() {
   islandEl.classList.add('launching');
   launchInput.value = '';
   launchItems = [];
-  renderLaunchResults();
+  renderLaunchResults(); // shows your pinned apps until you type
   setTimeout(() => launchInput.focus(), 30);
 }
 
@@ -1611,12 +1768,32 @@ function applySettings(s) {
   if (!s) return;
   applyAccent(s.accent);
   applyArtColor(Boolean(s.artColor));
+  applyDock();
 }
 
 // ---------- tabs + expand/collapse ----------
 
 const TAB_NAMES = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System' };
-for (const b of document.querySelectorAll('.dock button[data-icon]')) b.prepend(icon(ICONS[b.dataset.icon]));
+for (const b of document.querySelectorAll('.dock button[data-icon]')) {
+  b.prepend(icon(ICONS[b.dataset.icon]));
+  b.draggable = true;
+}
+
+/** Puts the dock icons in your order and hides the ones you switched off. */
+function applyDock() {
+  const s = state.settings || {};
+  const dock = $('#dock');
+  const order = s.dockOrder && s.dockOrder.length ? s.dockOrder : [];
+  const buttons = [...dock.querySelectorAll('button[data-tab]')];
+  const rank = (t) => {
+    const i = order.indexOf(t);
+    return i < 0 ? 100 + buttons.findIndex((b) => b.dataset.tab === t) : i;
+  };
+  buttons.sort((a, b) => rank(a.dataset.tab) - rank(b.dataset.tab)).forEach((b) => dock.append(b));
+  const hidden = new Set(s.dockHidden || []);
+  for (const b of buttons) b.hidden = hidden.has(b.dataset.tab) && b.dataset.tab !== state.tab;
+}
+makeSortable($('#dock'), 'button[data-tab]', (el) => el.dataset.tab, (order) => window.island.setOrder('dock', order));
 
 function renderTabs() {
   for (const b of document.querySelectorAll('.tabs button[data-tab]')) b.classList.toggle('active', b.dataset.tab === state.tab);
@@ -1745,6 +1922,12 @@ window.island.onUpdate((key, value) => {
   if (key === 'lyrics') {
     state.lyrics = value;
     if (state.expanded && state.tab === 'media') tickLyrics();
+    return;
+  }
+  if (key === 'apps') {
+    state.apps = value;
+    if (state.launching) renderLaunchResults();
+    else if (state.expanded && state.tab === 'home') renderHome();
     return;
   }
   if (key === 'sys') {

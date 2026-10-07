@@ -76,7 +76,8 @@ static class ApronVoice
     static void Main(string[] args)
     {
         stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
-        var info = SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.Name.StartsWith("en-"));
+        var info = SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.Name == "en-US")
+            ?? SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.Name.StartsWith("en-"));
         if (info == null)
         {
             Emit("{\"error\":\"no English speech recognizer installed\"}");
@@ -97,9 +98,21 @@ static class ApronVoice
                 Emit("{\"error\":\"no microphone: " + e.Message.Replace("\"", "'") + "\"}");
                 return;
             }
+            bool debug = Environment.GetEnvironmentVariable("APRON_VOICE_DEBUG") == "1";
+            if (debug)
+            {
+                int peak = 0;
+                engine.AudioLevelUpdated += (s, e) => { if (e.AudioLevel > peak) peak = e.AudioLevel; };
+                new Thread(() => { while (true) { Thread.Sleep(2000); Emit("{\"debug\":\"audio peak " + peak + "\"}"); peak = 0; } }) { IsBackground = true }.Start();
+                engine.SpeechHypothesized += (s, e) => Emit("{\"debug\":\"heard? " + e.Result.Text.Replace("\"", "'") + " " + e.Result.Confidence.ToString("0.00", CultureInfo.InvariantCulture) + "\"}");
+                engine.SpeechRecognitionRejected += (s, e) => Emit("{\"debug\":\"rejected " + (e.Result.Alternates.Count > 0 ? e.Result.Alternates[0].Text + " " + e.Result.Alternates[0].Confidence.ToString("0.00", CultureInfo.InvariantCulture) : "-") + "\"}");
+                engine.AudioSignalProblemOccurred += (s, e) => Emit("{\"debug\":\"signal problem " + e.AudioSignalProblem + "\"}");
+            }
             engine.SpeechRecognized += (s, e) =>
             {
-                if (e.Result.Confidence < 0.72f) return;
+                if (debug) Emit("{\"debug\":\"recognized " + e.Result.Text + " " + e.Result.Confidence.ToString("0.00", CultureInfo.InvariantCulture) + "\"}");
+                // Real voices on laptop mics score lower than synthesized speech; 0.55 still rejects chatter.
+                if (e.Result.Confidence < 0.55f) return;
                 var sem = e.Result.Semantics;
                 if (!sem.ContainsKey("cmd")) return;
                 var sb = new StringBuilder("{\"cmd\":\"").Append(sem["cmd"].Value).Append('"');

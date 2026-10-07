@@ -49,6 +49,9 @@ function settingsPayload() {
     peek: config.peek !== false,
     countdowns: config.countdowns || [],
     homeWidgets: config.homeWidgets,
+    dockOrder: config.dockOrder,
+    notchShow: config.notchShow,
+    dockHidden: config.dockHidden,
   };
 }
 
@@ -75,6 +78,7 @@ const state = {
   spotify: null, // { connected, id, liked, playlists }
   voice: null, // { status }
   flashcards: { count: 0 },
+  apps: [], // pinned quick-access apps, with icons
   ask: null, // the latest "Ask Claude" answer
   code: null, // last one-time code seen in a notification
   event: null, // short-lived: notification / copied / blocked / timer-done
@@ -487,6 +491,35 @@ function checkBedtime() {
   }
 }
 
+// ---------- quick-access apps ----------
+
+const iconCache = new Map();
+async function appIcon(file) {
+  if (iconCache.has(file)) return iconCache.get(file);
+  let url = null;
+  try {
+    url = (await app.getFileIcon(file, { size: 'large' })).toDataURL();
+  } catch {
+    url = null;
+  }
+  iconCache.set(file, url);
+  return url;
+}
+
+async function refreshApps() {
+  const list = (config.pinnedApps || []).filter((a) => a && a.path && fs.existsSync(a.path));
+  update('apps', await Promise.all(list.map(async (a) => ({ name: a.name, path: a.path, icon: await appIcon(a.path) }))));
+}
+
+/** Only things the launcher indexed (Start menu + Desktop) can be pinned. */
+function pinApp(file) {
+  const hit = getIndex().find((i) => i.path === file);
+  if (!hit) return null;
+  const list = config.pinnedApps || [];
+  if (!list.some((a) => a.path === hit.path)) setConfig({ pinnedApps: [...list, { name: hit.name, path: hit.path }].slice(0, 16) });
+  return hit.name;
+}
+
 // ---------- launcher ----------
 
 let launcherShortcut = null;
@@ -606,6 +639,7 @@ function applyConfig(next) {
   if (changed('voice') && sources.voice) sources.voice.setEnabled(config.voice === true);
   if (changed('flashcardsFolder', 'notesFile')) loadFlashcards();
   if (changed('classMode')) checkClassMode();
+  if (changed('pinnedApps')) refreshApps();
   update('settings', settingsPayload());
   rebuildTray();
   sendSettings();
@@ -805,6 +839,36 @@ ipcMain.on('island:timer', (_e, op, arg) => {
 ipcMain.on('island:open-settings', () => openSettings());
 ipcMain.handle('island:launcher-search', (_e, input) => launcher.search(getIndex(), String(input || '').slice(0, 300)));
 ipcMain.on('island:launcher-run', (_e, item) => runLauncher(item));
+ipcMain.on('island:pin', (_e, file) => {
+  const name = pinApp(String(file));
+  emit({ type: 'info', text: name ? `${name} pinned to Apps` : "Couldn't pin that", trail: name ? '📌' : '!' });
+});
+ipcMain.on('island:unpin', (_e, file) => setConfig({ pinnedApps: (config.pinnedApps || []).filter((a) => a.path !== String(file)) }));
+ipcMain.on('island:open-app', (_e, file) => {
+  // Only open what you pinned.
+  const hit = (config.pinnedApps || []).find((a) => a.path === String(file));
+  if (hit && fs.existsSync(hit.path)) shell.openPath(hit.path);
+});
+ipcMain.on('island:notch', (_e, mode) => {
+  const clean = sanitize({ notchShow: mode });
+  if (clean.notchShow) setConfig(clean);
+});
+// Drag-to-reorder from the notch.
+ipcMain.on('island:order', (_e, kind, list) => {
+  const key = { dock: 'dockOrder', home: 'homeWidgets', apps: 'pinnedApps' }[kind];
+  if (!key) return;
+  if (key === 'pinnedApps') {
+    const byPath = new Map((config.pinnedApps || []).map((a) => [a.path, a]));
+    return setConfig({ pinnedApps: (Array.isArray(list) ? list : []).map((p) => byPath.get(p)).filter(Boolean) });
+  }
+  const clean = sanitize({ [key]: list });
+  if (clean[key]) setConfig(clean);
+});
+ipcMain.handle('settings:search-apps', (_e, q) => launcher.search(getIndex(), String(q || '').slice(0, 100)).filter((r) => r.kind === 'open'));
+ipcMain.handle('settings:pin', (_e, file) => {
+  pinApp(String(file));
+  return settingsSnapshot();
+});
 ipcMain.handle('island:flashcard', () => (cards.length ? cards[Math.floor(Math.random() * cards.length)] : null));
 ipcMain.on('island:plan', (_e, op) => {
   if (op === 'make') makePlan();
@@ -856,6 +920,11 @@ ipcMain.handle('settings:set', (_e, patch) => {
     return { ok: false, error: err.message, ...settingsSnapshot() };
   }
   const clean = sanitize(patch);
+  // Settings can reorder or remove pinned apps; new pins go through settings:pin (index-checked).
+  if (clean.pinnedApps) {
+    const known = new Set((config.pinnedApps || []).map((x) => x.path));
+    clean.pinnedApps = clean.pinnedApps.filter((x) => known.has(x.path));
+  }
   if (Object.keys(clean).length) setConfig(clean);
   return settingsSnapshot();
 });
@@ -972,6 +1041,7 @@ app.whenReady().then(() => {
   });
   sources.voice.setEnabled(config.voice === true);
   loadFlashcards();
+  refreshApps();
   sources.cards = { stop: clearInterval.bind(null, setInterval(loadFlashcards, 30 * 60e3)) };
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v), { approvals: () => config.claudeApprovals !== false });
   sources.notifications = notifications.start(config, (n) => {
