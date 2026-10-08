@@ -31,7 +31,8 @@ static class ApronVoice
 
     static GrammarBuilder Command(string key, params object[] parts)
     {
-        var gb = new GrammarBuilder("hey apron");
+        // "Hey Apron", or just "Apron", then the command.
+        var gb = new GrammarBuilder(new Choices("hey apron", "apron", "okay apron", "hi apron"));
         foreach (var p in parts)
         {
             if (p is string) gb.Append((string)p);
@@ -67,11 +68,17 @@ static class ApronVoice
         return new Grammar(new GrammarBuilder(all)) { Name = "apron" };
     }
 
+    static readonly object emitLock = new object();
     static void Emit(string json)
     {
-        stdout.WriteLine(json);
-        stdout.Flush();
+        lock (emitLock)
+        {
+            stdout.WriteLine(json);
+            stdout.Flush();
+        }
     }
+
+    static string Q(string text) { return "\"" + (text ?? "").Replace("\\", "").Replace("\"", "'") + "\""; }
 
     static void Main(string[] args)
     {
@@ -108,11 +115,43 @@ static class ApronVoice
                 engine.SpeechRecognitionRejected += (s, e) => Emit("{\"debug\":\"rejected " + (e.Result.Alternates.Count > 0 ? e.Result.Alternates[0].Text + " " + e.Result.Alternates[0].Confidence.ToString("0.00", CultureInfo.InvariantCulture) : "-") + "\"}");
                 engine.AudioSignalProblemOccurred += (s, e) => Emit("{\"debug\":\"signal problem " + e.AudioSignalProblem + "\"}");
             }
+            // Mic level every few seconds, so Settings can show whether we hear anything at all.
+            int level = 0;
+            engine.AudioLevelUpdated += (s, e) => { if (e.AudioLevel > level) level = e.AudioLevel; };
+            if (!fromFile) new Thread(() => { while (true) { Thread.Sleep(3000); Emit("{\"level\":" + level + "}"); level = 0; } }) { IsBackground = true }.Start();
+            // "Listening…" cue as soon as the wake phrase is heard.
+            DateTime lastWake = DateTime.MinValue;
+            engine.SpeechHypothesized += (s, e) =>
+            {
+                var t = e.Result.Text.ToLowerInvariant();
+                // The engine forces everything it hears into the grammar, so ordinary speech
+                // also "contains apron"; only trust it when the wake words themselves score well.
+                var wakeWords = e.Result.Words.Where(w => w.Text.ToLowerInvariant() == "apron").ToList();
+                bool sure = wakeWords.Count > 0 && wakeWords.All(w => w.Confidence >= 0.75f);
+                if (debug) Emit("{\"debug\":\"hyp " + t + " apron=" + (wakeWords.Count > 0 ? wakeWords[0].Confidence.ToString("0.00", CultureInfo.InvariantCulture) : "-") + "\"}");
+                if (sure && t.Contains("apron") && (DateTime.UtcNow - lastWake).TotalSeconds > 3)
+                {
+                    lastWake = DateTime.UtcNow;
+                    Emit("{\"wake\":true}");
+                }
+            };
+            // Heard the wake phrase but not a clear command: say so instead of doing nothing.
+            engine.SpeechRecognitionRejected += (s, e) =>
+            {
+                if (e.Result.Alternates.Count == 0) return;
+                var best = e.Result.Alternates[0];
+                bool wake = best.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.75f);
+                if (wake) Emit("{\"unsure\":" + Q(best.Text) + "}");
+            };
             engine.SpeechRecognized += (s, e) =>
             {
                 if (debug) Emit("{\"debug\":\"recognized " + e.Result.Text + " " + e.Result.Confidence.ToString("0.00", CultureInfo.InvariantCulture) + "\"}");
-                // Real voices on laptop mics score lower than synthesized speech; 0.55 still rejects chatter.
-                if (e.Result.Confidence < 0.55f) return;
+                // Real voices on laptop mics score lower than synthesized speech; 0.5 still rejects chatter.
+                if (e.Result.Confidence < 0.5f)
+                {
+                    if (e.Result.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.75f)) Emit("{\"unsure\":" + Q(e.Result.Text) + "}");
+                    return;
+                }
                 var sem = e.Result.Semantics;
                 if (!sem.ContainsKey("cmd")) return;
                 var sb = new StringBuilder("{\"cmd\":\"").Append(sem["cmd"].Value).Append('"');

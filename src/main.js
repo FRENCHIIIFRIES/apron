@@ -495,6 +495,7 @@ function checkBedtime() {
 
 const iconCache = new Map();
 async function appIcon(file) {
+  if (isStoreApp(file)) return null; // Store apps show their first letter
   if (iconCache.has(file)) return iconCache.get(file);
   let url = null;
   try {
@@ -507,7 +508,7 @@ async function appIcon(file) {
 }
 
 async function refreshApps() {
-  const list = (config.pinnedApps || []).filter((a) => a && a.path && fs.existsSync(a.path));
+  const list = (config.pinnedApps || []).filter((a) => a && a.path && (isStoreApp(a.path) || fs.existsSync(a.path)));
   update('apps', await Promise.all(list.map(async (a) => ({ name: a.name, path: a.path, icon: await appIcon(a.path) }))));
 }
 
@@ -533,6 +534,35 @@ function openLauncherOn(displayId) {
 
 let launcherIndex = null;
 let launcherBuiltAt = 0;
+
+/** Store apps for the launcher, from Windows' own Start menu list (runs in the background). */
+function loadStoreApps() {
+  const { execFile } = require('child_process');
+  execFile(
+    'powershell.exe',
+    ['-NoProfile', '-Command', "Get-StartApps | Where-Object { $_.AppID -match '!' } | Select-Object Name, AppID | ConvertTo-Json -Compress"],
+    { windowsHide: true, timeout: 30000, maxBuffer: 5e6 },
+    (err, out) => {
+      if (err) return;
+      try {
+        const list = JSON.parse(out);
+        launcher.setStoreApps(Array.isArray(list) ? list : [list]);
+        launcherIndex = null; // rebuild with them next time
+        refreshApps();
+      } catch {
+        // keep what we have
+      }
+    },
+  );
+}
+
+const isStoreApp = (p) => /^shell:AppsFolder\\[\w.-]+![\w.-]+$/.test(String(p));
+
+/** Opens an indexed/pinned item: Store apps go through explorer's AppsFolder. */
+function openItem(p) {
+  if (isStoreApp(p)) require('child_process').spawn('explorer.exe', [p], { detached: true, stdio: 'ignore' }).unref();
+  else shell.openPath(p);
+}
 function getIndex() {
   if (!launcherIndex || Date.now() - launcherBuiltAt > 10 * 60e3) {
     launcherIndex = launcher.buildIndex();
@@ -548,7 +578,7 @@ async function runLauncher(item) {
     case 'open': {
       // Only open things that are actually in the index.
       const hit = getIndex().find((i) => i.path === item.path);
-      if (hit) await shell.openPath(hit.path);
+      if (hit) openItem(hit.path);
       break;
     }
     case 'url':
@@ -847,7 +877,7 @@ ipcMain.on('island:unpin', (_e, file) => setConfig({ pinnedApps: (config.pinnedA
 ipcMain.on('island:open-app', (_e, file) => {
   // Only open what you pinned.
   const hit = (config.pinnedApps || []).find((a) => a.path === String(file));
-  if (hit && fs.existsSync(hit.path)) shell.openPath(hit.path);
+  if (hit && (isStoreApp(hit.path) || fs.existsSync(hit.path))) openItem(hit.path);
 });
 ipcMain.on('island:notch', (_e, mode) => {
   const clean = sanitize({ notchShow: mode });
@@ -1035,13 +1065,31 @@ app.whenReady().then(() => {
     saveRefresh: (tok) => setConfig({ spotifyRefreshEnc: tok ? safeStorage.encryptString(tok).toString('base64') : '' }),
     openUrl: (u) => shell.openExternal(u),
   });
-  sources.voice = voice.create(onVoice, (v) => {
-    update('voice', v);
-    sendSettings();
-  });
+  let voiceStatus = {};
+  sources.voice = voice.create(
+    onVoice,
+    (v) => {
+      voiceStatus = v;
+      update('voice', v);
+      sendSettings();
+    },
+    (hint) => {
+      if (hint.wake) emit({ type: 'info', text: 'Listening…', trail: '🎙' });
+      else if (hint.unsure) emit({ type: 'info', text: "Didn't catch that. Try again", trail: '🎙' });
+      else if (hint.level !== undefined) {
+        // Mic level for Settings (0-100); only re-sent when it changes noticeably.
+        if (!state.voice || state.voice.level === undefined || Math.abs((state.voice.level || 0) - hint.level) >= 3) {
+          update('voice', { ...voiceStatus, level: hint.level });
+          sendSettings();
+        }
+      }
+    },
+  );
   sources.voice.setEnabled(config.voice === true);
   loadFlashcards();
   refreshApps();
+  loadStoreApps();
+  sources.storeApps = { stop: clearInterval.bind(null, setInterval(loadStoreApps, 30 * 60e3)) };
   sources.cards = { stop: clearInterval.bind(null, setInterval(loadFlashcards, 30 * 60e3)) };
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v), { approvals: () => config.claudeApprovals !== false });
   sources.notifications = notifications.start(config, (n) => {

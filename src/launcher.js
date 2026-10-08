@@ -29,7 +29,14 @@ function walk(dir, exts, out, depth = 0) {
   }
 }
 
-/** Start menu shortcuts + Desktop items, de-duplicated by name. */
+// Microsoft Store apps (Claude, WhatsApp, Arc...) have no .lnk files; main fills this from
+// Get-StartApps and they open through shell:AppsFolder.
+let storeApps = [];
+function setStoreApps(list) {
+  storeApps = Array.isArray(list) ? list : [];
+}
+
+/** Start menu shortcuts + Store apps + Desktop items, de-duplicated by name. */
 function buildIndex() {
   const roots = [
     path.join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
@@ -42,6 +49,12 @@ function buildIndex() {
     const name = path.basename(file).replace(/\.(lnk|url)$/i, '');
     if (/uninstall|readme|help|documentation|website|release notes/i.test(name)) continue;
     if (!items.has(name.toLowerCase())) items.set(name.toLowerCase(), { name, path: file, type: 'app' });
+  }
+  for (const a of storeApps) {
+    if (!a || !a.Name || !/^[\w.\-]+![\w.\-]+$/.test(a.AppID || '')) continue;
+    const key = a.Name.toLowerCase();
+    if (/uninstall|readme|help/i.test(a.Name) || items.has(key)) continue;
+    items.set(key, { name: a.Name, path: `shell:AppsFolder\\${a.AppID}`, type: 'app', store: true });
   }
   for (const desk of [path.join(os.homedir(), 'Desktop'), path.join(os.homedir(), 'OneDrive', 'Desktop')]) {
     let entries = [];
@@ -107,4 +120,4 @@ function search(index, input) {
   return results.slice(0, 6);
 }
 
-module.exports = { buildIndex, search, score, looksLikeUrl };
+module.exports = { buildIndex, search, score, looksLikeUrl, setStoreApps };

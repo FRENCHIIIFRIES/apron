@@ -54,3 +54,17 @@ test('launcher: screen questions, translate, cards; settings for new features', 
   });
   assert.deepStrictEqual(sanitize({ aiProvider: 'openai', geminiModel: 'a b/../c' }), {});
 });
+
+test('launcher includes Microsoft Store apps via shell:AppsFolder', () => {
+  const L = require('../src/launcher');
+  L.setStoreApps([
+    { Name: 'Claude', AppID: 'Claude_pzs8sxrjxfjjc!Claude' },
+    { Name: 'Bad; calc', AppID: 'x!y; calc' },
+  ]);
+  const idx = L.buildIndex();
+  const claude = idx.find((i) => i.name === 'Claude');
+  assert.strictEqual(claude.path, `shell:AppsFolder${String.fromCharCode(92)}Claude_pzs8sxrjxfjjc!Claude`);
+  assert.ok(!idx.some((i) => i.name === 'Bad; calc'));
+  assert.strictEqual(L.search(idx, 'clau')[0].title, 'Claude');
+  L.setStoreApps([]);
+});

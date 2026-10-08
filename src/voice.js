@@ -18,8 +18,11 @@ function ensureBinary() {
   return BINARY;
 }
 
-/** onCommand({ cmd, minutes? }); onStatus({ status: 'listening' | 'off' | 'error', error? }) */
-function create(onCommand, onStatus) {
+/**
+ * onCommand({ cmd, minutes? }); onStatus({ status: 'listening' | 'off' | 'error', error? });
+ * onHint({ wake: true } | { unsure: text } | { level: 0-100 })
+ */
+function create(onCommand, onStatus, onHint = () => {}) {
   let proc = null;
   let wanted = false;
 
@@ -46,6 +49,7 @@ function create(onCommand, onStatus) {
           if (msg.error) onStatus({ status: 'error', error: msg.error });
           else if (msg.ready) onStatus({ status: 'listening' });
           else if (msg.cmd) onCommand(msg);
+          else if (msg.wake || msg.unsure || msg.level !== undefined) onHint(msg);
         } catch {
           // ignore
         }

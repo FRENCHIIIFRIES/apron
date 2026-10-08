@@ -647,7 +647,14 @@ function extrasSection() {
     h(
       'div',
       { class: 'item' },
-      label('"Hey Apron" voice commands', v.status === 'listening' ? 'Listening (offline, Windows speech engine; nothing is recorded)' : v.status === 'error' ? `Problem: ${v.error}` : 'Uses your mic while on: the orange mic dot shows'),
+      label(
+        '"Hey Apron" voice commands',
+        v.status === 'listening'
+          ? `Listening · mic level ${v.level == null ? '…' : v.level}${v.level != null && v.level < 5 ? ' (very quiet: talk, and if it stays near 0 set your mic as the default in Windows Settings → Sound → Input)' : ''}. Say "Hey Apron" or just "Apron", then the command. Offline; nothing is recorded.`
+          : v.status === 'error'
+            ? `Problem: ${v.error}`
+            : 'Say "Hey Apron, ten minute timer". Uses your mic while on (the orange dot shows).',
+      ),
       h('button', { class: `switch${c.voice ? ' on' : ''}`, role: 'switch', 'aria-label': 'Voice', onclick: () => set({ voice: !c.voice }) }),
     ),
     toggle('Translate what I copy', 'Copy Hindi (or other non-English) text and the notch shows the English', 'translateCopies'),
