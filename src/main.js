@@ -494,6 +494,26 @@ function checkBedtime() {
 // ---------- quick-access apps ----------
 
 const iconCache = new Map();
+
+/** Clean icons for .lnk shortcuts, via icons.ps1 (Electron's lookup shows a blank page). */
+function extractLnkIcons(paths) {
+  return new Promise((resolve) => {
+    if (!paths.length) return resolve({});
+    require('child_process').execFile(
+      'powershell.exe',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'icons.ps1')],
+      { windowsHide: true, timeout: 30000, maxBuffer: 20e6, env: { ...process.env, APRON_ICON_PATHS: JSON.stringify(paths) } },
+      (err, out) => {
+        try {
+          resolve(err ? {} : JSON.parse(out || '{}'));
+        } catch {
+          resolve({});
+        }
+      },
+    );
+  });
+}
+
 async function appIcon(file) {
   if (isStoreApp(file)) return null; // Store apps show their first letter
   if (iconCache.has(file)) return iconCache.get(file);
@@ -509,6 +529,9 @@ async function appIcon(file) {
 
 async function refreshApps() {
   const list = (config.pinnedApps || []).filter((a) => a && a.path && (isStoreApp(a.path) || fs.existsSync(a.path)));
+  const lnks = list.map((a) => a.path).filter((p) => /\.lnk$/i.test(p) && !iconCache.has(p));
+  const found = await extractLnkIcons(lnks);
+  for (const p of lnks) if (found[p]) iconCache.set(p, found[p]);
   update('apps', await Promise.all(list.map(async (a) => ({ name: a.name, path: a.path, icon: await appIcon(a.path) }))));
 }
 
