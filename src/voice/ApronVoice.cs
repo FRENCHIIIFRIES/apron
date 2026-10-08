@@ -127,7 +127,7 @@ static class ApronVoice
                 // The engine forces everything it hears into the grammar, so ordinary speech
                 // also "contains apron"; only trust it when the wake words themselves score well.
                 var wakeWords = e.Result.Words.Where(w => w.Text.ToLowerInvariant() == "apron").ToList();
-                bool sure = wakeWords.Count > 0 && wakeWords.All(w => w.Confidence >= 0.75f);
+                bool sure = wakeWords.Count > 0 && wakeWords.All(w => w.Confidence >= 0.85f);
                 if (debug) Emit("{\"debug\":\"hyp " + t + " apron=" + (wakeWords.Count > 0 ? wakeWords[0].Confidence.ToString("0.00", CultureInfo.InvariantCulture) : "-") + "\"}");
                 if (sure && t.Contains("apron") && (DateTime.UtcNow - lastWake).TotalSeconds > 3)
                 {
@@ -152,6 +152,8 @@ static class ApronVoice
                     if (e.Result.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.75f)) Emit("{\"unsure\":" + Q(e.Result.Text) + "}");
                     return;
                 }
+                // Music and TV can sound like commands; the wake word itself must be clear too.
+                if (!e.Result.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.6f)) return;
                 var sem = e.Result.Semantics;
                 if (!sem.ContainsKey("cmd")) return;
                 var sb = new StringBuilder("{\"cmd\":\"").Append(sem["cmd"].Value).Append('"');
