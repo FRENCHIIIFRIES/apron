@@ -23,7 +23,7 @@ const flashcards = require('./flashcards');
 const planner = require('./planner');
 const spotify = require('./spotify');
 const voice = require('./voice');
-const { pillPng } = require('./icon');
+const { appIconPng } = require('./icon');
 const updater = require('./updater');
 const hooksInstall = require('./hooksInstall');
 const { sanitize } = require('./settingsSchema');
@@ -744,7 +744,7 @@ function rebuildTray() {
 }
 
 function buildTray() {
-  tray = new Tray(nativeImage.createFromBuffer(pillPng(32), { scaleFactor: 2 }));
+  tray = new Tray(nativeImage.createFromBuffer(appIconPng(32), { scaleFactor: 2 }));
   tray.setToolTip('Apron');
   tray.on('click', openSettings);
   rebuildTray();
@@ -792,7 +792,7 @@ function openSettings() {
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#000000', symbolColor: '#ffffff', height: 40 },
-    icon: nativeImage.createFromBuffer(pillPng(64)),
+    icon: nativeImage.createFromBuffer(appIconPng(64)),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'settings', 'preload.js'),
@@ -1107,6 +1107,7 @@ app.whenReady().then(() => {
         }
       }
     },
+    { logFile: path.join(app.getPath('userData'), 'voice.log') },
   );
   sources.voice.setEnabled(config.voice === true);
   loadFlashcards();

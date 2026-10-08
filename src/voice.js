@@ -21,10 +21,21 @@ function ensureBinary() {
 /**
  * onCommand({ cmd, minutes? }); onStatus({ status: 'listening' | 'off' | 'error', error? });
  * onHint({ wake: true } | { unsure: text } | { level: 0-100 })
+ * logFile: where the helper's diagnostics go (what it matched and how sure it was; never audio).
  */
-function create(onCommand, onStatus, onHint = () => {}) {
+function create(onCommand, onStatus, onHint = () => {}, { logFile } = {}) {
   let proc = null;
   let wanted = false;
+
+  function log(text) {
+    if (!logFile) return;
+    try {
+      if (fs.existsSync(logFile) && fs.statSync(logFile).size > 256 * 1024) fs.renameSync(logFile, `${logFile}.old`);
+      fs.appendFileSync(logFile, `${new Date().toISOString()} ${text}\n`);
+    } catch {
+      // logging is best-effort
+    }
+  }
 
   function launch() {
     let binary;
@@ -46,9 +57,15 @@ function create(onCommand, onStatus, onHint = () => {}) {
         if (!line) continue;
         try {
           const msg = JSON.parse(line);
-          if (msg.error) onStatus({ status: 'error', error: msg.error });
-          else if (msg.ready) onStatus({ status: 'listening' });
-          else if (msg.cmd) onCommand(msg);
+          if (msg.debug) log(msg.debug);
+          else if (msg.error) {
+            log(`error ${msg.error}`);
+            onStatus({ status: 'error', error: msg.error });
+          } else if (msg.ready) onStatus({ status: 'listening' });
+          else if (msg.cmd) {
+            log(`command ${msg.cmd}${msg.minutes ? ` ${msg.minutes}` : ''} ${msg.confidence}`);
+            onCommand(msg);
+          }
           else if (msg.wake || msg.unsure || msg.level !== undefined) onHint(msg);
         } catch {
           // ignore
