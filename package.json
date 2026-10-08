@@ -1,7 +1,7 @@
 {
   "name": "apron",
   "productName": "Apron",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "A Nothing-style Dynamic Island for Windows: music, Google Calendar, Claude Code and GitHub at a glance.",
   "author": "FRENCHIIIFRIES",
   "license": "MIT",
