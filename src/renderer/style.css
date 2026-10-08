@@ -908,3 +908,185 @@ button {
 .widget[draggable="true"] { cursor: grab; }
 .widget[draggable="true"]:active { cursor: grabbing; }
 .dock button[hidden] { display: none; }
+
+/* ---------- motion: springy, smooth, never in the way ---------- */
+
+:root {
+  --spring-soft: cubic-bezier(0.34, 1.36, 0.5, 1);
+  --ease-out: cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+#island {
+  transition:
+    width 0.55s var(--spring-soft),
+    height 0.55s var(--spring-soft);
+  will-change: width, height;
+}
+#island .body { transform-origin: 50% 0; transition: border-radius 0.55s var(--spring-soft), box-shadow 0.4s ease; }
+
+/* the pill bounces a little when something new arrives */
+#island.pop .body { animation: pop 0.55s var(--spring-soft); }
+@keyframes pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.04, 1.12); }
+  100% { transform: scale(1); }
+}
+
+/* opening: content rises in, Home widgets cascade */
+#island.expanded-state .expanded { transition: opacity 0.3s ease 0.1s, filter 0.3s ease 0.1s; }
+.panel.active { animation: panelIn 0.38s var(--ease-out) both; }
+@keyframes panelIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); filter: blur(3px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+#island.opening .home .widget { animation: rise 0.5s var(--spring-soft) both; animation-delay: calc(var(--i, 0) * 30ms + 70ms); }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  to { opacity: 1; transform: none; }
+}
+.dock button { transition: transform 0.28s var(--spring-soft), background 0.15s; }
+.dock button:hover { transform: translateY(-1px) scale(1.14); }
+.dock button:active { transform: scale(0.9); }
+.widget { transition: box-shadow 0.15s, transform 0.25s var(--spring-soft); }
+.widget:hover { transform: translateY(-1px); }
+.pill-btn { transition: transform 0.2s var(--spring-soft), background 0.15s, box-shadow 0.15s; }
+.pill-btn:active { transform: scale(0.94); }
+#island.opening .row { animation: rowIn 0.35s var(--ease-out) both; }
+@keyframes rowIn { from { opacity: 0; transform: translateY(4px); } }
+
+/* ---------- talking to Apron ---------- */
+
+#island.voice { width: 290px; }
+#island.voice .body {
+  box-shadow:
+    0 2px 18px color-mix(in srgb, var(--accent) calc(25% + var(--lvl, 0) * 60%), transparent),
+    inset 0 -1px 0 var(--accent);
+}
+.mic-orb { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); }
+.mic-orb.live { animation: orb 1.3s ease-out infinite; }
+@keyframes orb {
+  0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+.wave { display: flex; align-items: center; gap: 3px; height: 20px; }
+.wave i {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--fg);
+  height: calc(4px + var(--lvl, 0) * 16px * var(--k, 1));
+  transition: height 0.07s linear;
+  animation: wob 0.55s ease-in-out infinite alternate;
+}
+.wave i:nth-child(1) { --k: 0.45; animation-delay: -0.1s; }
+.wave i:nth-child(2) { --k: 0.8; animation-delay: -0.35s; }
+.wave i:nth-child(3) { --k: 1; animation-delay: -0.2s; }
+.wave i:nth-child(4) { --k: 0.7; animation-delay: -0.5s; }
+.wave i:nth-child(5) { --k: 0.4; animation-delay: -0.05s; }
+@keyframes wob { from { transform: scaleY(0.55); } to { transform: scaleY(1); } }
+.think { display: flex; gap: 4px; }
+.think i { width: 5px; height: 5px; border-radius: 50%; background: var(--fg); animation: think 1s ease-in-out infinite; }
+.think i:nth-child(2) { animation-delay: 0.15s; }
+.think i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes think {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+.mic-btn { flex: none; margin-left: 8px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; box-shadow: inset 0 0 0 1px var(--faint); }
+.mic-btn svg { width: 12px; height: 12px; fill: var(--fg); }
+.mic-btn:hover { box-shadow: inset 0 0 0 1px var(--accent); }
+.mic-btn:hover svg { fill: var(--accent); }
+.mic-btn.live { background: var(--accent); box-shadow: none; animation: orb 1.3s ease-out infinite; }
+.mic-btn.live svg { fill: #fff; }
+
+/* ---------- charging ---------- */
+
+#island.charge .body { box-shadow: 0 2px 18px rgba(61, 220, 132, 0.45), inset 0 -1px 0 #3ddc84; }
+.charge-batt { position: relative; display: block; width: 34px; height: 18px; border: 2px solid var(--fg); border-radius: 5px; padding: 2px; }
+.charge-batt::after { content: ""; position: absolute; right: -5px; top: 4px; width: 3px; height: 6px; border-radius: 0 2px 2px 0; background: var(--fg); }
+.charge-batt i {
+  display: block;
+  height: 100%;
+  width: var(--to);
+  border-radius: 2px;
+  background: linear-gradient(90deg, #3ddc84, #c8ffe0, #3ddc84);
+  background-size: 200% 100%;
+  animation: fillUp 1.1s var(--ease-out) both, shimmer 1.3s linear 1.1s infinite;
+}
+@keyframes fillUp { from { width: 0; } }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.bolt { color: #3ddc84; font-size: 16px; animation: bolt 1.2s ease-in-out infinite; }
+@keyframes bolt { 50% { opacity: 0.4; transform: scale(0.85); } }
+#island.peek .lead .charge-batt { width: 34px; height: 18px; }
+
+/* ---------- mic muted ---------- */
+
+.priv i.muted-mic { background: none; box-shadow: inset 0 0 0 2px #ff3b30; animation: none; position: relative; }
+.priv i.muted-mic::after { content: ""; position: absolute; left: 3px; top: -1px; width: 2px; height: 10px; background: #ff3b30; transform: rotate(45deg); }
+
+/* ---------- screenshots ---------- */
+
+.shot-card { display: flex; gap: 10px; padding: 8px; margin-bottom: 8px; border-radius: 14px; background: var(--row); box-shadow: inset 0 0 0 1px var(--line); }
+#island.opening .shot-card, #island.opening .shelf-tile { animation: rise 0.45s var(--spring-soft) both; }
+.shot-card img { flex: none; width: 128px; height: 76px; object-fit: cover; border-radius: 8px; }
+.shot-actions { display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start; }
+.shot-meta { width: 100%; color: var(--muted); font-size: 10px; }
+#island .lead img.shot-lead { border-radius: 8px; filter: none; object-fit: cover; }
+
+/* ---------- phone ---------- */
+
+.phone-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 8px; }
+.phone-head .glyph svg { width: 22px; height: 22px; fill: var(--fg); }
+.phone-head .main { flex: 1; min-width: 0; }
+.phone-head .title { font-weight: 700; }
+.phone-head .sub { color: var(--muted); font-size: 10.5px; }
+.phone-batt { display: flex; align-items: center; gap: 6px; font-family: var(--dotted); font-size: 18px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.row .pill-btn { flex: none; }
+.app-badge.ringing-once { animation: ring 0.9s ease-in-out 2; }
+.glyph svg { width: 16px; height: 16px; fill: var(--fg); }
+
+/* ---------- shelf ---------- */
+
+.shelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(86px, 1fr)); gap: 8px; }
+.shelf-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 4px 8px;
+  border-radius: 12px;
+  background: var(--row);
+  cursor: grab;
+  transition: transform 0.22s var(--spring-soft), box-shadow 0.15s;
+}
+.shelf-tile:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--muted); }
+.shelf-tile:active { cursor: grabbing; transform: scale(0.95); }
+.shelf-tile img { width: 32px; height: 32px; }
+.shelf-tile .nm { max-width: 100%; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shelf-tile .sz { color: var(--muted); font-size: 9px; }
+.shelf-row { display: flex; gap: 6px; margin-top: 2px; }
+.shelf-tile.small { padding: 5px; width: 40px; animation: none; }
+.shelf-tile.small img, .shelf-tile.small .app-letter { width: 24px; height: 24px; font-size: 9px; }
+.drop-hint { display: grid; gap: 6px; place-items: center; text-align: center; padding: 36px 20px; border-radius: 18px; box-shadow: inset 0 0 0 1.5px var(--faint); color: var(--muted); }
+.drop-hint b { color: var(--fg); font-family: var(--dotted); font-size: 20px; }
+#island.dropping .body::after {
+  content: "Drop to keep on the shelf";
+  position: absolute;
+  inset: 8px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  border: 1.5px dashed var(--accent);
+  background: rgba(0, 0, 0, 0.8);
+  color: var(--fg);
+  font: 11px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: panelIn 0.25s var(--ease-out);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

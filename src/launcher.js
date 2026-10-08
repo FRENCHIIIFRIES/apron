@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 
 const PREFIXES = [
+  { re: /^(shot|screenshot)\s+/i, kind: 'askshot', hint: 'Ask AI about the screenshot' },
   { re: /^(\?\?|ask screen\s+)/i, kind: 'askscreen', hint: 'Ask AI about my screen' },
   { re: /^(\?|ask\s+)/i, kind: 'ask', hint: 'Ask AI' },
   { re: /^(tr|translate)\s+/i, kind: 'translate', hint: 'Translate' },

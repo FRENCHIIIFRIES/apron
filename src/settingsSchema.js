@@ -2,8 +2,10 @@
 // Anything not listed here (or that fails validation) is ignored.
 
 const HEX = /^#[0-9a-f]{6}$/i;
-const WIDGETS = ['music', 'apps', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system', 'stats', 'plan', 'clip'];
-const TABS = ['home', 'media', 'calendar', 'claude', 'timer', 'todo', 'clip', 'sys'];
+const WIDGETS = ['music', 'apps', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system', 'stats', 'plan', 'clip', 'phone', 'shelf'];
+// What the closed notch can show, in the order you prefer (Settings → Closed notch).
+const NOTCH_ITEMS = ['music', 'class', 'soon', 'next', 'due', 'countdown', 'rain', 'phone', 'weather', 'todo', 'prs', 'system', 'clock'];
+const TABS = ['home', 'media', 'calendar', 'claude', 'timer', 'todo', 'clip', 'sys', 'phone', 'shelf'];
 const bool = (v) => (typeof v === 'boolean' ? v : undefined);
 const int = (min, max) => (v) => (Number.isFinite(Number(v)) ? Math.max(min, Math.min(max, Math.round(Number(v)))) : undefined);
 const oneOf = (...opts) => (v) => (opts.includes(v) ? v : undefined);
@@ -78,7 +80,18 @@ const SCHEMA = {
   translateCopies: bool,
   spotifyClientId: (v) => (typeof v === 'string' && /^[0-9a-f]{0,64}$/i.test(v.trim()) ? v.trim() : undefined),
   flashcardsFolder: text(400),
-  notchShow: oneOf('auto', 'rotate', 'music', 'next', 'weather', 'due', 'todo', 'prs', 'system', 'countdown', 'clock'),
+  notchShow: oneOf('auto', 'rotate'),
+  notchPriority: (v) => (Array.isArray(v) ? [...new Set(v.filter((t) => NOTCH_ITEMS.includes(t)))] : undefined),
+  speedDial: (v) =>
+    Array.isArray(v)
+      ? v
+          .filter((c) => c && typeof c.name === 'string' && typeof c.number === 'string' && c.name.trim() && /^\+?[\d\s()-]{3,24}$/.test(c.number.trim()))
+          .map((c) => ({ name: c.name.trim().slice(0, 40), number: c.number.trim() }))
+          .slice(0, 8)
+      : undefined,
+  hotspot: (v) => (typeof v === 'string' && v.length <= 64 && !/[\r\n"]/.test(v) ? v.trim() : undefined),
+  classNudge: bool,
+  screenshotPeek: bool,
   dockOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((t) => TABS.includes(t)))] : undefined),
   dockHidden: (v) => (Array.isArray(v) ? [...new Set(v.filter((t) => TABS.includes(t) && t !== 'home'))] : undefined),
   pinnedApps: (v) =>
@@ -113,4 +126,4 @@ function sanitize(patch) {
   return out;
 }
 
-module.exports = { sanitize, SCHEMA, WIDGETS, TABS };
+module.exports = { sanitize, SCHEMA, WIDGETS, TABS, NOTCH_ITEMS };

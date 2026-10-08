@@ -39,6 +39,12 @@ const state = {
   card: null, // { q, a, flipped }
   apps: [], // pinned apps: { name, path, icon }
   cardsMode: false,
+  voice: null, // tap-to-talk { status }
+  phone: null, // { name, battery, connected }
+  micMuted: null,
+  inbox: { messages: [], calls: [] },
+  shelf: [],
+  shot: null, // latest screenshot { thumb, width, height, at }
 };
 const isPrimary = new URLSearchParams(location.search).get('primary') !== '0';
 
@@ -94,6 +100,9 @@ const ICONS = {
   list: 'M3 5h13v2H3zm0 6h13v2H3zm0 6h9v2H3zm15-6v6.3A2.5 2.5 0 1 0 20 20v-7h2v-2z',
   muted: 'M4 9v6h4l5 4V5L8 9zm16.6 0-1.4-1.4-2.6 2.6-2.6-2.6L12.6 9l2.6 2.6-2.6 2.6 1.4 1.4 2.6-2.6 2.6 2.6 1.4-1.4-2.6-2.6z',
   timer: 'M9 1h6v2H9zm3 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zm1 8.4V8h-2v6.6l4.2 2.5 1-1.7z',
+  mic: 'M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3zm5.3-3a5.3 5.3 0 0 1-10.6 0H5a7 7 0 0 0 6 6.9V22h2v-3.1a7 7 0 0 0 6-6.9z',
+  phone: 'M8 1.5h8A2.5 2.5 0 0 1 18.5 4v16a2.5 2.5 0 0 1-2.5 2.5H8A2.5 2.5 0 0 1 5.5 20V4A2.5 2.5 0 0 1 8 1.5zM7.5 5v13h9V5zM12 19.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  shelf: 'M4 3h16l2 9v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8zm1.6 2-1.4 6H9l1 2h4l1-2h4.8l-1.4-6z',
 };
 
 // ---------- formatting ----------
@@ -146,6 +155,19 @@ function compactView() {
   const now = Date.now();
   const sessions = state.claude || [];
 
+  // Talking to Apron: the notch listens (bars move with your voice), then thinks.
+  const vs = state.voice && state.voice.status;
+  if (vs === 'listening' || vs === 'thinking') {
+    const live = vs === 'listening';
+    return {
+      id: `voice:${vs}`,
+      voice: true,
+      lead: h('span', { class: `mic-orb${live ? ' live' : ''}` }),
+      text: live ? 'Listening…' : 'Thinking…',
+      trail: live ? h('span', { class: 'wave' }, h('i'), h('i'), h('i'), h('i'), h('i')) : h('span', { class: 'think' }, h('i'), h('i'), h('i')),
+    };
+  }
+
   const waiting = sessions.filter((s) => s.state === 'waiting');
   if (waiting.length) {
     const s = waiting[0];
@@ -193,37 +215,32 @@ function compactView() {
   const events = (state.calendar && state.calendar.events) || [];
   const soon = events.find((e) => !e.allDay && e.start - now < SOON && e.start - now > 0);
 
-  // What you chose to keep in the closed notch. Only "rotate" cycles.
-  const mode = (state.settings && state.settings.notchShow) || 'auto';
-  if (mode !== 'rotate') {
-    const items = rotationItems(now, events, soon);
-    const pick = (id) => {
-      if (id === 'music') return isPlaying(m) ? musicItem(m) : null;
-      if (id === 'next') return items.find((i) => ['class', 'soon', 'next'].includes(i.id)) || null;
-      if (id === 'system') return systemItem();
-      return items.find((i) => i.id === id) || null;
-    };
-    if (mode === 'auto') return pick('music') || pick('next') || pick('clock');
-    return pick(mode) || pick('clock');
-  }
-
-  // Rotate: music stays up while it plays; an imminent event takes turns with it.
-  if (isPlaying(m)) {
-    const music = {
-      id: 'music',
-      tab: 'media',
-      lead: m.art ? h('img', { src: m.art, alt: '' }) : dot('done'),
-      text: m.artist ? `${m.title} · ${m.artist}` : m.title,
-      trail: h('span', { class: 'bars' }, h('i'), h('i'), h('i')),
-    };
-    if (soon && Math.floor(now / rotateMs()) % 2) {
-      return { id: 'soon', tab: 'calendar', lead: calLead(), text: soon.title, trail: fmtUntil(soon.start) };
-    }
-    return music;
-  }
-
+  // Your priority list (Settings → Closed notch): the first thing with something to show,
+  // or, on Rotate, each of them in turn.
+  const s = state.settings || {};
+  const order = s.notchPriority && s.notchPriority.length ? s.notchPriority : NOTCH_DEFAULT;
   const items = rotationItems(now, events, soon);
-  return items[Math.floor(now / rotateMs()) % items.length];
+  const pick = (id) => {
+    if (id === 'music') return isPlaying(m) ? musicItem(m) : null;
+    if (id === 'system') return systemItem();
+    if (id === 'phone') return phoneItem();
+    return items.find((i) => i.id === id) || null;
+  };
+  const avail = order.map(pick).filter(Boolean);
+  const clock = items.find((i) => i.id === 'clock');
+  if (s.notchShow === 'rotate' && avail.length > 1) return avail[Math.floor(now / rotateMs()) % avail.length];
+  return avail[0] || clock;
+}
+
+const NOTCH_DEFAULT = ['music', 'class', 'soon', 'next', 'due', 'countdown', 'rain', 'phone', 'weather', 'todo', 'prs', 'system', 'clock'];
+
+/** "Asha's Nothing Phone" -> "Nothing Phone" */
+const shortPhone = (name) => String(name || 'Phone').replace(/^.*?['’]s\s+/, '') || 'Phone';
+
+function phoneItem() {
+  const p = state.phone;
+  if (!p || p.connected === false || !(p.battery >= 0)) return null;
+  return { id: 'phone', tab: 'phone', lead: h('span', { class: 'glyph' }, icon(ICONS.phone)), text: shortPhone(p.name), trail: `${p.battery}%` };
 }
 
 const DAY = 864e5;
@@ -346,6 +363,8 @@ function renderCompact() {
   currentCompact = v;
   islandEl.classList.toggle('alert', Boolean(v.alert) && !state.expanded);
   islandEl.classList.toggle('peek', Boolean(v.peek) && !state.expanded);
+  islandEl.classList.toggle('voice', Boolean(v.voice) && !state.expanded);
+  islandEl.classList.toggle('charge', Boolean(v.charge) && !state.expanded);
   reportRect();
   // Rebuild only when something visible changed, so the art <img> doesn't flicker every tick.
   const lead = v.lead.tagName === 'IMG' ? `img${v.lead.src.length}` : v.lead.className;
@@ -359,6 +378,11 @@ function renderCompact() {
     el.classList.remove('swap');
     void el.offsetWidth;
     el.classList.add('swap');
+    if ((v.alert || v.peek || v.voice) && !state.expanded) {
+      islandEl.classList.remove('pop');
+      void islandEl.offsetWidth;
+      islandEl.classList.add('pop');
+    }
     lastCompactId = v.id;
   }
   fill($('#compact-lead'), v.lead);
@@ -462,7 +486,7 @@ function renderMedia() {
   const m = state.media;
   const root = $('#media');
   if (!m || !m.active) {
-    fill(root, 
+    fill(root,
       h('div', { class: 'empty' }, m && m.status === 'error' ? `Media unavailable: ${m.error}` : 'Nothing playing'),
       m && volumeRow(m),
     );
@@ -480,7 +504,7 @@ function renderMedia() {
   const prevBtn = h('button', { title: 'Previous', onclick: send('prev'), disabled: !m.canPrev }, icon(ICONS.prev));
   const nextBtn = h('button', { title: 'Next', onclick: send('next'), disabled: !m.canNext }, icon(ICONS.next));
 
-  fill(root, 
+  fill(root,
     h(
       'div',
       { class: 'media-top' },
@@ -661,7 +685,7 @@ function renderCalendar() {
     return;
   }
   if (c.status === 'unconfigured') {
-    fill(root, 
+    fill(root,
       h(
         'div',
         { class: 'empty' },
@@ -881,6 +905,14 @@ function renderClaude() {
   fill(root, ...items);
 }
 
+function renderVoiceBits() {
+  const vs = state.voice && state.voice.status;
+  micBtn.classList.toggle('live', vs === 'listening' || vs === 'thinking');
+  const pb = $('#phone-badge');
+  const calls = ((state.inbox && state.inbox.calls) || []).length;
+  pb.textContent = calls ? String(calls) : '';
+}
+
 function renderBadge() {
   const waiting = (state.claude || []).filter((s) => s.state === 'waiting').length;
   const failing = ((state.github && state.github.prs) || []).filter((p) => p.ci === 'fail').length;
@@ -1013,7 +1045,7 @@ function renderTimer() {
     }
   }
   if (!t) {
-    fill(root, 
+    fill(root,
       h('div', { class: 'timer-big idle' }, '00:00'),
       h(
         'div',
@@ -1034,7 +1066,7 @@ function renderTimer() {
     return;
   }
   const left = Math.max(0, (t.end - Date.now()) / 1000);
-  fill(root, 
+  fill(root,
     h('div', { class: `timer-big${t.lockdown ? ' locked' : ''}` }, fmtDuration(left).padStart(5, '0')),
     h('div', { class: 'track timer-track' }, h('i', { style: `width:${(1 - (left * 1000) / t.total) * 100}%` })),
     h(
@@ -1096,7 +1128,7 @@ function renderTodo() {
     return;
   }
   const done = todos.filter((t) => t.done).length;
-  fill(root, 
+  fill(root,
     ...todos.map((t) =>
       h(
         'div',
@@ -1133,14 +1165,40 @@ function codeCard() {
   );
 }
 
+function askAboutShot() {
+  if (!state.launching) openLauncher();
+  launchInput.value = 'shot ';
+  updateLaunch();
+  setTimeout(() => launchInput.focus(), 40);
+}
+
+function shotCard() {
+  const s = state.shot;
+  if (!s) return null;
+  return h(
+    'div',
+    { class: 'shot-card' },
+    h('img', { src: s.thumb, alt: 'Latest screenshot' }),
+    h(
+      'div',
+      { class: 'shot-actions' },
+      h('div', { class: 'shot-meta' }, `Screenshot · ${s.width}×${s.height} · ${fmtAgo(s.at)}`),
+      h('button', { class: 'pill-btn', onclick: askAboutShot }, '✦ Ask AI'),
+      h('button', { class: 'pill-btn ghost', onclick: () => window.island.shot('save') }, 'Save'),
+      h('button', { class: 'pill-btn ghost', title: 'Forget it', onclick: () => window.island.shot('dismiss') }, '×'),
+    ),
+  );
+}
+
 function renderClip() {
   const root = $('#clip');
   const items = state.clipboard || [];
   if (!items.length) {
-    fill(root, codeCard() || '', h('div', { class: 'empty' }, 'Copy something and it shows up here. Kept in memory only.'));
+    fill(root, shotCard(), codeCard() || '', h('div', { class: 'empty' }, 'Copy something and it shows up here. Kept in memory only.'));
     return;
   }
-  fill(root, 
+  fill(root,
+    shotCard(),
     codeCard() || '',
     ...items.map((c, i) =>
       h(
@@ -1175,8 +1233,8 @@ const stop = (fn) => (e) => {
 };
 
 // Right-click a widget to keep that thing in the closed notch.
-const WIDGET_TO_NOTCH = { music: 'music', next: 'next', weather: 'weather', due: 'due', todo: 'todo', claude: 'prs', system: 'system', focus: 'next', stats: 'clock' };
-const NOTCH_NAMES = { auto: 'Auto', music: 'Music', next: 'Next class', weather: 'Weather', due: 'Homework due', todo: 'To-do', prs: 'Claude & PRs', system: 'System', countdown: 'Countdown', clock: 'Clock', rotate: 'Rotate' };
+const WIDGET_TO_NOTCH = { music: 'music', next: 'class', weather: 'weather', due: 'due', todo: 'todo', claude: 'prs', system: 'system', focus: 'class', stats: 'clock', phone: 'phone' };
+const NOTCH_NAMES = { music: 'Music', class: 'Classes', weather: 'Weather', due: 'Homework due', todo: 'To-do', prs: 'Claude & PRs', system: 'System', clock: 'Clock', phone: 'Phone battery' };
 
 function widget(kind, tab, title, ...body) {
   const base = kind.split(' ')[0];
@@ -1190,7 +1248,7 @@ function widget(kind, tab, title, ...body) {
         const mode = WIDGET_TO_NOTCH[base];
         if (!mode) return;
         window.island.setNotch(mode);
-        flash({ id: `notch:${Date.now()}`, lead: dot('done'), text: `Notch will show: ${NOTCH_NAMES[mode]}`, trail: '📌' }, 2500);
+        flash({ id: `notch:${Date.now()}`, lead: dot('done'), text: `${NOTCH_NAMES[mode]} first in the notch`, trail: '📌' }, 2500);
       },
     },
     h('div', { class: 'w-title' }, title),
@@ -1354,6 +1412,23 @@ const WIDGET_RENDER = {
       b ? [h('div', { class: 'w-line' }, b.task), h('div', { class: 'w-big' }, fmtTime(b.start)), h('div', { class: 'w-sub' }, `${b.minutes} min`)] : h('button', { class: 'pill-btn ghost', onclick: stop(() => window.island.plan('make')) }, 'Plan homework'),
     );
   },
+  phone() {
+    const p = state.phone;
+    const ib = state.inbox || { messages: [], calls: [] };
+    const missed = ib.calls[0];
+    const msg = ib.messages[0];
+    const sub = missed ? `☎ missed · ${missed.name}` : msg ? `${msg.app} · ${msg.title}` : p ? (p.connected === false ? 'not nearby' : 'connected') : 'Pair it in Phone Link';
+    return widget('phone', 'phone', p ? shortPhone(p.name) : 'Phone', h('div', { class: `w-big${p ? '' : ' muted'}` }, p ? `${p.battery}%` : '–'), h('div', { class: 'w-sub' }, sub));
+  },
+  shelf() {
+    const items = state.shelf || [];
+    return widget(
+      'shelf wide',
+      'shelf',
+      `Shelf${items.length ? ` · ${items.length}` : ''}`,
+      items.length ? h('div', { class: 'shelf-row' }, ...items.slice(0, 7).map((it) => shelfTile(it, true))) : h('div', { class: 'w-sub' }, 'Drop files on the notch to keep them here'),
+    );
+  },
   clip() {
     const c = (state.clipboard || [])[0];
     return widget('clip', 'clip', 'Last copied', h('div', { class: 'w-clip' }, c ? (c.secret ? '•••••••• (hidden)' : c.text.replace(/\s+/g, ' ').slice(0, 90)) : 'Nothing yet'));
@@ -1402,11 +1477,12 @@ function renderHome() {
   const home = $('#home');
   fill(
     home,
-    ...list.map((k) => {
+    ...list.map((k, i) => {
       const w = WIDGET_RENDER[k] && WIDGET_RENDER[k]();
       if (w) {
         w.dataset.w = k;
         w.draggable = true;
+        w.style.setProperty('--i', String(i));
       }
       return w;
     }),
@@ -1424,6 +1500,144 @@ function tickHome() {
   const bar = $('#home .w-track i');
   if (bar && m && m.duration) bar.style.width = `${(mediaPosition(m) / m.duration) * 100}%`;
 }
+
+// ---------- phone tab (through Phone Link) ----------
+
+function renderPhone() {
+  const p = state.phone;
+  const ib = state.inbox || { messages: [], calls: [] };
+  const s = state.settings || {};
+  const items = [];
+  items.push(
+    h(
+      'div',
+      { class: 'phone-head' },
+      h('span', { class: 'glyph' }, icon(ICONS.phone)),
+      h('div', { class: 'main' }, h('div', { class: 'title' }, p ? p.name : 'Your phone'), h('div', { class: 'sub' }, p ? (p.connected === false ? 'Not nearby · battery from when it was' : 'Connected through Phone Link') : 'Pair your phone in Phone Link (Bluetooth) to see its battery')),
+      p && h('span', { class: 'phone-batt' }, batteryLead(p.battery / 100, false), h('b', {}, `${p.battery}%`)),
+    ),
+  );
+  items.push(
+    h(
+      'div',
+      { class: 'chip-row' },
+      h('button', { class: 'pill-btn', title: s.hotspot ? `Join ${s.hotspot}` : 'Pick your hotspot in Settings → Phone', onclick: () => window.island.phone('hotspot') }, `📶 ${s.hotspot ? 'Hotspot' : 'Set up hotspot'}`),
+      ...(s.speedDial || []).map((name, i) => h('button', { class: 'pill-btn ghost', title: `Call ${name} through Phone Link`, onclick: () => window.island.phone('dial', i) }, `☎ ${name}`)),
+      h('button', { class: 'pill-btn ghost', onclick: () => window.island.phone('open') }, 'Phone Link ↗'),
+    ),
+  );
+  if (ib.calls.length) {
+    items.push(h('div', { class: 'heading' }, 'Missed calls'));
+    for (const c of ib.calls) {
+      items.push(
+        h(
+          'div',
+          { class: 'row' },
+          h('span', { class: 'app-badge ringing-once' }, '☎'),
+          h('div', { class: 'main' }, h('div', { class: 'title' }, c.name), h('div', { class: 'sub' }, `${fmtAgo(c.at)} ago`)),
+          h('button', { class: 'pill-btn', onclick: () => window.island.phone('callback', c.id) }, 'Call back'),
+          h('button', { class: 'x', title: 'Dismiss', onclick: () => window.island.phone('dismiss', c.id) }, '×'),
+        ),
+      );
+    }
+  }
+  items.push(h('div', { class: 'heading' }, 'Messages'));
+  if (!ib.messages.length) items.push(h('div', { class: 'empty small' }, 'Texts and WhatsApps from your phone show up here.'));
+  for (const m of ib.messages) {
+    items.push(
+      h(
+        'div',
+        { class: 'row' },
+        h('span', { class: 'app-badge' }, (m.app || '?').slice(0, 1)),
+        h('div', { class: 'main' }, h('div', { class: 'title' }, `${m.title}`), h('div', { class: 'sub' }, `${m.app} · ${m.body || ''}`)),
+        h('span', { class: 'side' }, fmtAgo(m.at)),
+        h('button', { class: 'pill-btn', onclick: () => window.island.phone('reply', m.id) }, 'Reply'),
+        h('button', { class: 'x', title: 'Dismiss', onclick: () => window.island.phone('dismiss', m.id) }, '×'),
+      ),
+    );
+  }
+  fill($('#phone'), ...items);
+}
+
+// ---------- shelf (drop files on the notch, drag them out later) ----------
+
+function fmtSize(n) {
+  if (!n) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${Math.round(n / 1024)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+
+function shelfTile(it, small) {
+  return h(
+    'div',
+    {
+      class: `shelf-tile${small ? ' small' : ''}`,
+      draggable: 'true',
+      title: `${it.name}\nClick to open · drag out to use · right-click to remove`,
+      // Native drag (so it drops into Explorer, Classroom, email...), not the widget reorder.
+      ondragstart: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.island.shelfDrag(it.path);
+      },
+      onclick: stop(() => window.island.shelf('open', it.path)),
+      oncontextmenu: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.island.shelf('remove', it.path);
+      },
+    },
+    it.icon ? h('img', { src: it.icon, alt: '' }) : h('span', { class: 'app-letter' }, it.dir ? '▤' : (it.name.split('.').pop() || '?').slice(0, 3)),
+    !small && h('span', { class: 'nm' }, it.name),
+    !small && h('span', { class: 'sz' }, it.dir ? 'folder' : fmtSize(it.size)),
+  );
+}
+
+function renderShelf() {
+  const items = state.shelf || [];
+  if (!items.length) {
+    fill($('#shelf'), h('div', { class: 'drop-hint' }, h('b', {}, 'Drop files here'), h('small', {}, 'Drag files or folders onto the notch to keep them handy, then drag them out into any app. Screenshots you save land here too.')));
+    return;
+  }
+  fill(
+    $('#shelf'),
+    h('div', { class: 'shelf-grid' }, ...items.map((it) => shelfTile(it, false))),
+    h('button', { class: 'pill-btn ghost clear-done', onclick: () => window.island.shelf('clear') }, 'Clear shelf'),
+  );
+}
+
+// Dropping files anywhere on the notch puts them on the shelf.
+let dragDepth = 0;
+const hasFiles = (e) => [...(e.dataTransfer ? e.dataTransfer.types : [])].includes('Files');
+islandEl.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  islandEl.classList.add('dropping');
+  if (!state.expanded) expand();
+  if (state.tab !== 'shelf') {
+    state.tab = 'shelf';
+    render();
+  }
+});
+islandEl.addEventListener('dragover', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+islandEl.addEventListener('dragleave', (e) => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) islandEl.classList.remove('dropping');
+});
+islandEl.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  islandEl.classList.remove('dropping');
+  window.island.shelfAdd(e.dataTransfer.files);
+});
 
 // ---------- system tab ----------
 
@@ -1484,6 +1698,7 @@ function renderPrivacy() {
   const dots = [];
   if (p.cam.length) dots.push(h('i', { class: 'cam', title: `Camera: ${p.cam.join(', ')}` }));
   if (p.mic.length) dots.push(h('i', { class: 'mic', title: `Microphone: ${p.mic.join(', ')}` }));
+  if (state.micMuted) dots.push(h('i', { class: 'muted-mic', title: 'Mic muted (Ctrl+Alt+M)' }));
   fill(el, ...dots);
 }
 
@@ -1494,13 +1709,13 @@ const launchResults = $('#launch-results');
 let launchItems = [];
 let launchSel = 0;
 let searchSeq = 0;
-const KIND_GLYPH = { askscreen: '◩', translate: '文', cards: '▤', addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
+const KIND_GLYPH = { askshot: '▣', askscreen: '◩', translate: '文', cards: '▤', addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
 
 function renderLaunchResults() {
   const a = state.ask;
   const showAnswer = a && state.askOpen;
   if (showAnswer) {
-    fill(launchResults, 
+    fill(launchResults,
       h(
         'div',
         { class: `answer${a.status === 'error' ? ' err' : ''}` },
@@ -1513,7 +1728,7 @@ function renderLaunchResults() {
     t.scrollTop = t.scrollHeight;
     return;
   }
-  fill(launchResults, 
+  fill(launchResults,
     ...launchItems.map((it, i) =>
       h(
         'div',
@@ -1555,9 +1770,12 @@ function runLaunch(i) {
   const it = launchItems[i];
   if (!it || it.kind === 'hint') return;
   window.island.launcherRun(it);
-  if (it.kind === 'ask') {
+  // Answers (questions, screen questions, translations) show right here in the launcher.
+  const ANSWER_PREFIX = { ask: '? ', askscreen: '?? ', askshot: 'shot ', translate: 'tr ' };
+  if (ANSWER_PREFIX[it.kind]) {
     state.askOpen = true;
-    launchInput.value = '? ';
+    state.ask = { question: it.title, status: 'streaming', text: '', screen: it.kind === 'askscreen' };
+    launchInput.value = ANSWER_PREFIX[it.kind];
     renderLaunchResults();
     return; // stay open to show the answer
   }
@@ -1573,6 +1791,14 @@ function openLauncher() {
   launchItems = [];
   renderLaunchResults(); // shows your pinned apps until you type
   setTimeout(() => launchInput.focus(), 30);
+}
+
+/** Shows the latest answer (asked out loud) in the launcher. */
+function openAnswer() {
+  if (!state.launching) openLauncher();
+  state.askOpen = true;
+  launchInput.value = '? ';
+  renderLaunchResults();
 }
 
 function closeLauncher() {
@@ -1612,7 +1838,21 @@ launchInput.addEventListener('keydown', (ev) => {
 
 function onEvent(e) {
   if (!e || Date.now() - e.at > 5000) return;
-  if (e.type === 'notification' && e.call) {
+  if (e.type === 'notification' && e.missed) {
+    flash(
+      {
+        id: `missed:${e.at}`,
+        alert: true,
+        peek: true,
+        tab: 'phone',
+        lead: h('span', { class: 'app-badge' }, '☎'),
+        text: h('span', { class: 'two' }, h('b', {}, (e.title || 'Missed call').replace(/^missed (voice |video )?call( from)?:?\s*/i, '') || 'Missed call'), h('small', {}, 'Missed call · hover to call back')),
+        textKey: `missed:${e.at}`,
+        trail: '',
+      },
+      10000,
+    );
+  } else if (e.type === 'notification' && e.call) {
     flash(
       {
         id: `call:${e.at}`,
@@ -1643,6 +1883,7 @@ function onEvent(e) {
       {
         id: `n:${e.at}`,
         peek: true,
+        tab: e.phone ? 'phone' : undefined,
         lead: h('span', { class: 'app-badge' }, (e.name || '?').slice(0, 1)),
         text: h('span', { class: 'two' }, h('b', {}, e.title || e.name), h('small', {}, `${e.name}${e.phone ? ' · phone' : ''}${e.body ? ` · ${e.body}` : ''}`)),
         textKey: `${e.at}`,
@@ -1686,6 +1927,39 @@ function onEvent(e) {
       { id: `tr:${e.at}`, peek: true, tab: 'clip', lead: h('span', { class: 'app-badge' }, '文'), text: h('span', { class: 'two' }, h('b', {}, e.text), h('small', {}, `Translated to ${e.toName}`)), textKey: `tr:${e.at}`, trail: '' },
       9000,
     );
+  } else if (e.type === 'shot') {
+    const s = state.shot;
+    if (s) {
+      flash(
+        {
+          id: `shot:${e.at}`,
+          peek: true,
+          tab: 'clip',
+          lead: h('img', { class: 'shot-lead', src: s.thumb, alt: '' }),
+          text: h('span', { class: 'two' }, h('b', {}, 'Screenshot'), h('small', {}, 'Hover for Ask AI · Save')),
+          textKey: `shot:${e.at}`,
+          trail: '',
+        },
+        6000,
+      );
+    }
+  } else if (e.type === 'classend') {
+    const next = e.next ? `Next: ${e.next.title}${e.next.location ? ` · ${e.next.location}` : ''} at ${fmtTime(e.next.start)}` : 'Then a break';
+    flash(
+      {
+        id: `ce:${e.at}`,
+        peek: true,
+        tab: 'calendar',
+        lead: h('span', { class: 'app-badge' }, '⏱'),
+        text: h('span', { class: 'two' }, h('b', {}, `${e.left} min left · ${e.title}`), h('small', {}, next)),
+        textKey: `ce:${e.at}`,
+        trail: '',
+      },
+      12000,
+    );
+    if (isPrimary) chime();
+  } else if (e.type === 'mic') {
+    flash({ id: `mic:${e.at}`, alert: e.muted, lead: h('span', { class: 'glyph' }, icon(ICONS.mic)), text: e.muted ? 'Mic muted' : 'Mic on', trail: e.muted ? 'MUTED' : 'ON' }, 2500);
   } else if (e.type === 'open-tab') {
     if (e.cards) {
       state.cardsMode = true;
@@ -1711,7 +1985,21 @@ if (navigator.getBattery) {
   navigator.getBattery().then((b) => {
     let warned = false;
     b.addEventListener('chargingchange', () => {
-      flash({ id: 'battery', lead: batteryLead(b.level, b.charging), text: b.charging ? 'Charging' : 'On battery', trail: `${Math.round(b.level * 100)}%` });
+      const pct = Math.round(b.level * 100);
+      if (b.charging) {
+        flash(
+          {
+            id: `charge:${Date.now()}`,
+            peek: true,
+            charge: true,
+            lead: h('span', { class: 'charge-batt' }, h('i', { style: `--to:${Math.max(6, pct)}%` })),
+            text: h('span', { class: 'two' }, h('b', {}, `${pct}%`), h('small', {}, 'Charging')),
+            textKey: `charge:${pct}`,
+            trail: h('span', { class: 'bolt' }, '⚡'),
+          },
+          3800,
+        );
+      } else flash({ id: 'battery', lead: batteryLead(b.level, false), text: 'On battery', trail: `${pct}%` });
       if (b.charging) warned = false;
     });
     b.addEventListener('levelchange', () => {
@@ -1750,6 +2038,9 @@ customInput.addEventListener('change', () => pickAccent(customInput.value));
 $('#swatch-toggle').addEventListener('click', () => swatchesEl.classList.toggle('open'));
 $('#gear').addEventListener('click', () => window.island.openSettings());
 $('#search-btn').addEventListener('click', () => window.island.openLauncher());
+const micBtn = $('#mic-btn');
+micBtn.append(icon(ICONS.mic));
+micBtn.addEventListener('click', () => window.island.voice());
 
 // Album art: Nothing-style black & white, or its real colours.
 const artToggle = $('#art-toggle');
@@ -1773,7 +2064,7 @@ function applySettings(s) {
 
 // ---------- tabs + expand/collapse ----------
 
-const TAB_NAMES = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System' };
+const TAB_NAMES = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System', phone: 'Phone', shelf: 'Shelf' };
 for (const b of document.querySelectorAll('.dock button[data-icon]')) {
   b.prepend(icon(ICONS[b.dataset.icon]));
   b.draggable = true;
@@ -1805,6 +2096,10 @@ for (const b of document.querySelectorAll('.tabs button[data-tab]')) {
   b.addEventListener('click', () => {
     state.tab = b.dataset.tab;
     scrollCalendar = true;
+    // Rows of the new tab slide in once.
+    islandEl.classList.add('opening');
+    clearTimeout(expand.t);
+    expand.t = setTimeout(() => islandEl.classList.remove('opening'), 700);
     render();
   });
 }
@@ -1816,6 +2111,7 @@ function reportRect() {
   let hgt = 36;
   if (state.expanded) [w, hgt] = [580, 330];
   else if (islandEl.classList.contains('peek')) [w, hgt] = [340, 58];
+  else if (islandEl.classList.contains('voice')) w = 290;
   else if (islandEl.classList.contains('alert')) w = 330;
   const r = { x: (WIN_W - w) / 2, y: 0, w, h: hgt };
   const key = JSON.stringify(r);
@@ -1833,7 +2129,9 @@ function expand() {
   state.expanded = true;
   state.peekUntil = 0;
   scrollCalendar = true;
-  islandEl.classList.add('expanded-state');
+  islandEl.classList.add('expanded-state', 'opening');
+  clearTimeout(expand.t);
+  expand.t = setTimeout(() => islandEl.classList.remove('opening'), 800);
   swatchesEl.classList.remove('open');
   render();
 }
@@ -1863,10 +2161,13 @@ window.island.onToggle(() => {
   else openLauncher();
 });
 
+window.island.onAnswer(() => openAnswer());
+
 function render() {
   renderCompact();
   renderTabs();
   renderBadge();
+  renderVoiceBits();
   $('#clock').textContent = fmtTime(Date.now());
   if (!state.expanded) return;
   if (state.tab === 'media') renderMedia();
@@ -1877,6 +2178,8 @@ function render() {
   if (state.tab === 'clip') renderClip();
   if (state.tab === 'home') renderHome();
   if (state.tab === 'sys') renderSys();
+  if (state.tab === 'phone') renderPhone();
+  if (state.tab === 'shelf') renderShelf();
 }
 
 function mediaShape(m) {
@@ -1941,6 +2244,16 @@ window.island.onUpdate((key, value) => {
   }
   if (key === 'privacy') {
     state.privacy = value;
+    renderPrivacy();
+    return;
+  }
+  if (key === 'voiceLevel') {
+    // ~16 times a second while listening: only move the bars.
+    islandEl.style.setProperty('--lvl', String(Math.max(0, Math.min(1, value / 100))));
+    return;
+  }
+  if (key === 'micMuted') {
+    state.micMuted = value;
     renderPrivacy();
     return;
   }

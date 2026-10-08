@@ -1,83 +1,27 @@
-// "Hey Apron" voice commands, recognised offline with Windows' built-in speech engine
-// (System.Speech). Only a fixed set of phrases is listened for, nothing is recorded or
-// sent anywhere. Each recognised command is written to stdout as one JSON line.
+// Tap-to-talk recorder for Apron. The mic is only opened while you are talking to Apron:
+// "start" opens it, the clip ends by itself once you stop speaking (or on "stop"), and the
+// clip goes back to Apron as a WAV, which Gemini turns into a command. Nothing is kept.
 //
-// The mic is captured here (WASAPI, in Windows' "speech" mode) instead of letting
-// System.Speech open it: on laptop mic arrays the normal capture path can arrive
-// ~30 dB too quiet for the recogniser, while speech mode is tuned for voice and also
-// cancels whatever the laptop's own speakers are playing. A small auto-gain then
-// levels it before it reaches the recogniser.
+// The mic is captured with WASAPI in Windows' "speech" mode: on laptop mic arrays the
+// normal capture path can arrive ~30 dB too quiet, while speech mode is tuned for voice
+// and also cancels whatever the laptop's own speakers are playing.
+//
+// stdin:  start | stop | cancel
+// stdout: {"ready":true} {"listening":true} {"level":0-100} {"speech":true}
+//         {"clip":"<base64 wav>","ms":N} | {"silent":true} | {"cancelled":true} | {"error":"..."}
+// apron-voice.exe --file in.wav runs the same end-of-speech detection over a file (tests).
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Speech.AudioFormat;
-using System.Speech.Recognition;
 using System.Text;
 using System.Threading;
 
 static class ApronVoice
 {
     static StreamWriter stdout;
-
-    static readonly string[] NumberWords = {
-        "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
-        "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
-    };
-
-    static Choices Minutes()
-    {
-        var c = new Choices();
-        for (int i = 0; i < NumberWords.Length; i++) c.Add(new SemanticResultValue(NumberWords[i], i + 1));
-        foreach (var pair in new[] { Tuple.Create("twenty five", 25), Tuple.Create("thirty", 30), Tuple.Create("forty", 40),
-                                     Tuple.Create("forty five", 45), Tuple.Create("fifty", 50), Tuple.Create("sixty", 60),
-                                     Tuple.Create("ninety", 90), Tuple.Create("a hundred and twenty", 120) })
-            c.Add(new SemanticResultValue(pair.Item1, pair.Item2));
-        return c;
-    }
-
-    static GrammarBuilder Command(string key, params object[] parts)
-    {
-        // "Hey Apron", or just "Apron", then the command.
-        var gb = new GrammarBuilder(new Choices("hey apron", "apron", "okay apron", "hi apron"));
-        foreach (var p in parts)
-        {
-            if (p is string) gb.Append((string)p);
-            else if (p is Choices) gb.Append(new SemanticResultKey("minutes", (Choices)p));
-        }
-        var outer = new GrammarBuilder();
-        outer.Append(new SemanticResultKey("cmd", new SemanticResultValue(gb, key)));
-        return outer;
-    }
-
-    static Grammar Build()
-    {
-        var all = new Choices(
-            Command("timer", Minutes(), "minute timer"),
-            Command("timer", "set a timer for", Minutes(), "minutes"),
-            Command("timer", "timer for", Minutes(), "minutes"),
-            Command("pomodoro", "start pomodoro"),
-            Command("pomodoro", "start focus"),
-            Command("stop", "stop the timer"),
-            Command("stop", "stop timer"),
-            Command("stop", "cancel timer"),
-            Command("pause", "pause music"),
-            Command("pause", "pause"),
-            Command("play", "play music"),
-            Command("play", "resume music"),
-            Command("next", "next song"),
-            Command("next", "skip song"),
-            Command("prev", "previous song"),
-            Command("volup", "volume up"),
-            Command("voldown", "volume down"),
-            Command("whatsnext", "what's next"),
-            Command("launcher", "open search"));
-        return new Grammar(new GrammarBuilder(all)) { Name = "apron" };
-    }
-
     static readonly object emitLock = new object();
+
     public static void Emit(string json)
     {
         lock (emitLock)
@@ -88,206 +32,164 @@ static class ApronVoice
     }
 
     public static string Q(string text) { return "\"" + (text ?? "").Replace("\\", "").Replace("\"", "'") + "\""; }
-    static string F(float v) { return v.ToString("0.00", CultureInfo.InvariantCulture); }
-
-    static string WakeConfidence(RecognizedPhrase r)
-    {
-        var w = r.Words.FirstOrDefault(x => x.Text.ToLowerInvariant() == "apron");
-        return w == null ? "-" : F(w.Confidence);
-    }
 
     static void Main(string[] args)
     {
         stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false));
-        var info = SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.Name == "en-US")
-            ?? SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.Name.StartsWith("en-"));
-        if (info == null)
+        if (args.Length == 2 && args[0] == "--file")
         {
-            Emit("{\"error\":\"no English speech recognizer installed\"}");
+            RunFile(args[1]);
             return;
         }
-        bool debug = Environment.GetEnvironmentVariable("APRON_VOICE_DEBUG") == "1";
-        // A .wav path argument replaces the microphone (used by the tests); it goes through
-        // the same auto-gain and stream as live audio.
-        bool fromFile = args.Length > 0;
-        short[] fileSamples = null;
-        if (fromFile)
+        Emit("{\"ready\":true}");
+        Session session = null;
+        var stdin = new StreamReader(Console.OpenStandardInput());
+        string line;
+        while ((line = stdin.ReadLine()) != null)
         {
-            try { fileSamples = Wav.Read16kMono(args[0]); }
-            catch (Exception e) { Emit("{\"error\":" + Q("bad wav: " + e.Message) + "}"); return; }
+            var cmd = line.Trim();
+            if (cmd == "start")
+            {
+                if (session != null && !session.Finished) continue;
+                session = new Session(true);
+                var mic = new Mic(Environment.GetEnvironmentVariable("APRON_VOICE_MODE") ?? "speech", session);
+                session.Mic = mic;
+                new Thread(mic.Run) { IsBackground = true }.Start();
+            }
+            else if (cmd == "stop" && session != null) session.Finish(false);
+            else if (cmd == "cancel" && session != null) session.Finish(true);
         }
-        var pipe = new PcmPipe(fromFile ? fileSamples.Length * 2 + 64000 : 16000 * 2 * 4);
-        using (var engine = new SpeechRecognitionEngine(info))
+        if (session != null) session.Finish(true);
+    }
+
+    static void RunFile(string path)
+    {
+        short[] samples;
+        try { samples = Wav.Read16kMono(path); }
+        catch (Exception e) { Emit("{\"error\":" + Q("bad wav: " + e.Message) + "}"); return; }
+        var session = new Session(false);
+        var block = new float[Session.Block];
+        for (int i = 0; i + Session.Block <= samples.Length && !session.Finished; i += Session.Block)
         {
-            engine.LoadGrammar(Build());
-            engine.SetInputToAudioStream(pipe, new SpeechAudioFormatInfo(16000, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
-            if (debug)
-            {
-                engine.SpeechHypothesized += (s, e) => Emit("{\"debug\":" + Q("hyp " + e.Result.Text + " " + F(e.Result.Confidence) + " apron=" + WakeConfidence(e.Result)) + "}");
-                engine.AudioSignalProblemOccurred += (s, e) => Emit("{\"debug\":" + Q("signal " + e.AudioSignalProblem) + "}");
-            }
-            // "Listening…" cue as soon as the wake phrase is heard.
-            DateTime lastWake = DateTime.MinValue;
-            engine.SpeechHypothesized += (s, e) =>
-            {
-                // The engine forces everything it hears into the grammar, so ordinary speech
-                // also "contains apron"; only trust it when the wake words themselves score well.
-                var wakeWords = e.Result.Words.Where(w => w.Text.ToLowerInvariant() == "apron").ToList();
-                bool sure = wakeWords.Count > 0 && wakeWords.All(w => w.Confidence >= 0.85f);
-                if (sure && (DateTime.UtcNow - lastWake).TotalSeconds > 3)
-                {
-                    lastWake = DateTime.UtcNow;
-                    Emit("{\"wake\":true}");
-                }
-            };
-            // Heard the wake phrase but not a clear command: say so instead of doing nothing.
-            engine.SpeechRecognitionRejected += (s, e) =>
-            {
-                if (e.Result.Alternates.Count == 0) return;
-                var best = e.Result.Alternates[0];
-                // Logged (text and scores only) so missed commands can be tuned from voice.log.
-                Emit("{\"debug\":" + Q("rejected " + best.Text + " " + F(best.Confidence) + " apron=" + WakeConfidence(best)) + "}");
-                bool wake = best.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.75f);
-                if (wake) Emit("{\"unsure\":" + Q(best.Text) + "}");
-            };
-            engine.SpeechRecognized += (s, e) =>
-            {
-                Emit("{\"debug\":" + Q("recognized " + e.Result.Text + " " + F(e.Result.Confidence) + " apron=" + WakeConfidence(e.Result)) + "}");
-                // Real voices on laptop mics score lower than synthesized speech; 0.5 still rejects chatter.
-                if (e.Result.Confidence < 0.5f)
-                {
-                    if (e.Result.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.75f)) Emit("{\"unsure\":" + Q(e.Result.Text) + "}");
-                    return;
-                }
-                // Music and TV can sound like commands; the wake word itself must be clear too.
-                if (!e.Result.Words.Any(w => w.Text.ToLowerInvariant() == "apron" && w.Confidence >= 0.6f)) return;
-                var sem = e.Result.Semantics;
-                if (!sem.ContainsKey("cmd")) return;
-                var sb = new StringBuilder("{\"cmd\":\"").Append(sem["cmd"].Value).Append('"');
-                if (sem["cmd"].ContainsKey("minutes")) sb.Append(",\"minutes\":").Append(Convert.ToInt32(sem["cmd"]["minutes"].Value));
-                else if (sem.ContainsKey("minutes")) sb.Append(",\"minutes\":").Append(Convert.ToInt32(sem["minutes"].Value));
-                sb.Append(",\"confidence\":").Append(F(e.Result.Confidence)).Append('}');
-                Emit(sb.ToString());
-            };
-
-            var agc = new Agc();
-            if (fromFile)
-            {
-                // Feed the whole file through the auto-gain, then end the stream.
-                var block = new float[320];
-                for (int i = 0; i < fileSamples.Length; i += block.Length)
-                {
-                    int n = Math.Min(block.Length, fileSamples.Length - i);
-                    for (int j = 0; j < n; j++) block[j] = fileSamples[i + j] / 32768f;
-                    pipe.Write(agc.Process(block, n));
-                }
-                // A little trailing silence so the last phrase is finalised.
-                pipe.Write(new short[16000]);
-                pipe.Finish();
-                var done = new ManualResetEvent(false);
-                engine.RecognizeCompleted += (s, e) => done.Set();
-                engine.RecognizeAsync(RecognizeMode.Multiple);
-                done.WaitOne(30000);
-                return;
-            }
-
-            var mic = new Mic(Environment.GetEnvironmentVariable("APRON_VOICE_MODE") ?? "speech", (samples, n) => pipe.Write(agc.Process(samples, n)));
-            new Thread(mic.Run) { IsBackground = true }.Start();
-            engine.RecognizeAsync(RecognizeMode.Multiple);
-            Emit("{\"ready\":true,\"recognizer\":\"" + info.Culture.Name + "\"}");
-            // Exit when Apron closes our stdin.
-            var stdin = new StreamReader(Console.OpenStandardInput());
-            while (stdin.ReadLine() != null) { }
-            mic.Stop();
-            pipe.Finish();
-            engine.RecognizeAsyncCancel();
+            for (int j = 0; j < Session.Block; j++) block[j] = samples[i + j] / 32768f;
+            session.Feed(block, Session.Block);
         }
+        if (!session.Finished) session.Finish(false);
     }
 }
 
-// Blocking pipe of 16 kHz 16-bit mono PCM between the capture thread and the recogniser.
-// System.Speech reads it like an endless stream; Read blocks until audio arrives.
-class PcmPipe : Stream
+// One recording: decides when you started and stopped talking, from loudness relative to
+// the room's own noise, then emits the trimmed, levelled clip.
+class Session
 {
-    readonly byte[] buf;
-    int head, count;
-    bool finished;
+    public const int Block = 320; // 20 ms at 16 kHz
+    const int PreRoll = 15; // blocks kept before speech starts (300 ms)
+    const int EndSilence = 50; // 1 s of quiet ends the clip
+    const int NoSpeechTimeout = 350; // 7 s without speech: give up
+    const int MaxBlocks = 500; // 10 s at most
+
+    readonly bool live;
+    readonly List<float> audio = new List<float>();
+    readonly float[] pending = new float[Block];
+    int pendingN;
+    int blocks, loudRun, quietRun, speechStart = -1, lastLoud = -1, sinceLevel;
+    float floor = -1;
+    float voiceLevel; // how loud you got while talking (peak of a ~60 ms average)
+    float smooth;
+    readonly List<float> firstRms = new List<float>();
+    public Mic Mic;
+    public bool Finished { get; private set; }
     readonly object gate = new object();
 
-    public PcmPipe(int capacity) { buf = new byte[capacity]; }
+    public Session(bool live)
+    {
+        this.live = live;
+        if (live) ApronVoice.Emit("{\"listening\":true}");
+    }
 
-    public void Write(short[] samples)
+    public void Feed(float[] x, int n)
     {
         lock (gate)
         {
-            foreach (var s in samples)
+            if (Finished) return;
+            for (int i = 0; i < n; i++)
             {
-                if (count == buf.Length) { head = (head + 2) % buf.Length; count -= 2; } // recogniser fell behind: drop the oldest
-                int tail = (head + count) % buf.Length;
-                buf[tail] = (byte)(s & 0xFF);
-                buf[(tail + 1) % buf.Length] = (byte)((s >> 8) & 0xFF);
-                count += 2;
+                pending[pendingN++] = x[i];
+                if (pendingN == Block)
+                {
+                    pendingN = 0;
+                    OnBlock();
+                    if (Finished) return;
+                }
             }
-            Monitor.PulseAll(gate);
         }
     }
 
-    public void Finish() { lock (gate) { finished = true; Monitor.PulseAll(gate); } }
+    void OnBlock()
+    {
+        double sum = 0;
+        for (int i = 0; i < Block; i++) { audio.Add(pending[i]); sum += pending[i] * pending[i]; }
+        float rms = (float)Math.Sqrt(sum / Block);
+        blocks++;
+        // The room's noise level: the quietest of the first 200 ms, then tracked slowly
+        // while you aren't talking.
+        if (blocks <= 10)
+        {
+            firstRms.Add(rms);
+            float min = float.MaxValue;
+            foreach (var r in firstRms) min = Math.Min(min, r);
+            floor = min;
+        }
+        float start = Math.Max(floor * 3.2f, 0.0025f);
+        // Quiet means well below the room *and* well below your own voice, so steady
+        // background sound (a fan, a TV) still lets the clip end when you stop.
+        float quiet = Math.Max(Math.Max(floor * 2.0f, 0.0018f), voiceLevel * 0.25f);
+        if (speechStart < 0 && blocks > 10 && rms < start) floor = floor * 0.97f + rms * 0.03f;
 
-    public override int Read(byte[] buffer, int offset, int len)
+        smooth = smooth * 0.6f + rms * 0.4f;
+        if (rms >= start) { loudRun++; lastLoud = blocks; } else loudRun = 0;
+        if (speechStart >= 0 || loudRun >= 3) voiceLevel = Math.Max(voiceLevel, smooth);
+        if (speechStart < 0 && loudRun >= 3)
+        {
+            speechStart = blocks - 3;
+            if (live) ApronVoice.Emit("{\"speech\":true}");
+        }
+        if (speechStart >= 0) quietRun = rms < quiet ? quietRun + 1 : 0;
+
+        if (live && ++sinceLevel >= 3)
+        {
+            sinceLevel = 0;
+            double db = 20 * Math.Log10(Math.Max(rms, 1e-6) / Math.Max(floor, 1e-5));
+            ApronVoice.Emit("{\"level\":" + (int)Math.Max(0, Math.Min(100, db * 4)) + "}");
+        }
+
+        if (speechStart >= 0 && quietRun >= EndSilence) Finish(false);
+        else if (speechStart < 0 && blocks >= NoSpeechTimeout) Finish(false);
+        else if (blocks >= MaxBlocks) Finish(false);
+    }
+
+    public void Finish(bool cancelled)
     {
         lock (gate)
         {
-            while (count < len && !finished) Monitor.Wait(gate);
-            int n = Math.Min(len, count);
-            for (int i = 0; i < n; i++) buffer[offset + i] = buf[(head + i) % buf.Length];
-            head = (head + n) % buf.Length;
-            count -= n;
-            return n;
-        }
-    }
-
-    public override bool CanRead { get { return true; } }
-    public override bool CanSeek { get { return false; } }
-    public override bool CanWrite { get { return false; } }
-    public override long Length { get { return -1; } }
-    public override long Position { get { return 0; } set { } }
-    public override void Flush() { }
-    public override long Seek(long offset, SeekOrigin origin) { return 0; }
-    public override void SetLength(long value) { }
-    public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }
-}
-
-// Slow automatic gain: brings quiet mics up to a level the recogniser likes (speech peaks
-// around -10 dBFS) without pumping between words. Gain falls fast and rises slowly.
-class Agc
-{
-    const float Target = 0.3f, MaxGain = 16f;
-    float envelope = 0.02f, gain = 1f;
-
-    public short[] Process(float[] x, int n)
-    {
-        var outp = new short[n];
-        for (int start = 0; start < n; start += 320)
-        {
-            int end = Math.Min(n, start + 320);
+            if (Finished) return;
+            Finished = true;
+            if (Mic != null) Mic.Stop();
+            if (cancelled) { ApronVoice.Emit("{\"cancelled\":true}"); return; }
+            if (speechStart < 0) { ApronVoice.Emit("{\"silent\":true}"); return; }
+            int from = Math.Max(0, speechStart - PreRoll) * Block;
+            int to = Math.Min(audio.Count, (Math.Max(lastLoud, speechStart) + PreRoll) * Block);
             float peak = 0;
-            for (int i = start; i < end; i++) peak = Math.Max(peak, Math.Abs(x[i]));
-            envelope = Math.Max(peak, envelope * 0.998f);
-            float want = Math.Max(1f, Math.Min(MaxGain, Target / Math.Max(envelope, 1e-4f)));
-            gain = want < gain ? want : gain + (want - gain) * 0.02f;
-            for (int i = start; i < end; i++)
-            {
-                float v = Math.Max(-1f, Math.Min(1f, x[i] * gain));
-                outp[i] = (short)(v * 32767);
-            }
+            for (int i = from; i < to; i++) peak = Math.Max(peak, Math.Abs(audio[i]));
+            float gain = Math.Min(30f, 0.7f / Math.Max(peak, 1e-4f));
+            var pcm = new short[to - from];
+            for (int i = 0; i < pcm.Length; i++) pcm[i] = (short)(Math.Max(-1f, Math.Min(1f, audio[from + i] * gain)) * 32767);
+            ApronVoice.Emit("{\"clip\":\"" + Convert.ToBase64String(Wav.Bytes(pcm)) + "\",\"ms\":" + pcm.Length / 16 + "}");
         }
-        return outp;
     }
 }
 
-// WASAPI capture of the default mic, converted to 16 kHz mono floats. Restarts itself when
-// the default mic changes or is unplugged, and reports a 0-100 input level every 3 s.
+// WASAPI capture of the default mic, converted to 16 kHz mono floats for one Session.
 class Mic
 {
     [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
@@ -303,8 +205,6 @@ class Mic
     interface IMMDevice
     {
         [PreserveSig] int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
-        [PreserveSig] int OpenPropertyStore(int access, out IntPtr store);
-        [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
     }
 
     [ComImport, Guid("726778CD-F60A-4eda-82DE-E47610CD78AA"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -341,29 +241,23 @@ class Mic
     static readonly Guid FloatSubtype = new Guid("00000003-0000-0010-8000-00aa00389b71");
 
     readonly string mode;
-    readonly Action<float[], int> onAudio;
+    readonly Session session;
     volatile bool stopped;
 
-    public Mic(string mode, Action<float[], int> onAudio) { this.mode = mode; this.onAudio = onAudio; }
+    public Mic(string mode, Session session) { this.mode = mode; this.session = session; }
 
     public void Stop() { stopped = true; }
 
     public void Run()
     {
-        string lastError = null;
-        while (!stopped)
+        try
         {
-            try
-            {
-                Capture();
-                lastError = null;
-            }
-            catch (Exception e)
-            {
-                if (e.Message != lastError) ApronVoice.Emit("{\"debug\":" + ApronVoice.Q("mic: " + e.Message) + "}");
-                lastError = e.Message;
-                Thread.Sleep(2000);
-            }
+            Capture();
+        }
+        catch (Exception e)
+        {
+            ApronVoice.Emit("{\"error\":" + ApronVoice.Q("mic: " + e.Message) + "}");
+            session.Finish(true);
         }
     }
 
@@ -374,8 +268,6 @@ class Mic
         var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         IMMDevice device;
         Check(enumerator.GetDefaultAudioEndpoint(1 /* capture */, 0 /* console */, out device), "no microphone:");
-        string id;
-        device.GetId(out id);
         var iid = typeof(IAudioClient2).GUID;
         object o;
         Check(device.Activate(ref iid, 23 /* CLSCTX_ALL */, IntPtr.Zero, out o), "open mic");
@@ -401,11 +293,8 @@ class Mic
 
         double step = rate / 16000.0, phase = 0, acc = 0;
         int accCount = 0;
-        var outBuf = new float[4096];
+        var outBuf = new float[1024];
         int outN = 0;
-        float levelPeak = 0;
-        var nextLevel = DateTime.UtcNow.AddSeconds(3);
-        var nextDeviceCheck = DateTime.UtcNow.AddSeconds(3);
         Check(client.Start(), "start mic");
         try
         {
@@ -413,7 +302,7 @@ class Mic
             {
                 uint packet;
                 Check(capture.GetNextPacketSize(out packet), "read mic");
-                while (packet > 0)
+                while (packet > 0 && !stopped)
                 {
                     IntPtr data; uint frames, flags; ulong p1, p2;
                     Check(capture.GetBuffer(out data, out frames, out flags, out p1, out p2), "read mic");
@@ -439,34 +328,15 @@ class Mic
                         // Box-filter resample to 16 kHz (averages each output period's input).
                         while (phase >= step)
                         {
-                            float v = (float)(acc / Math.Max(accCount, 1));
-                            levelPeak = Math.Max(levelPeak, Math.Abs(v));
-                            outBuf[outN++] = v;
-                            if (outN == outBuf.Length) { onAudio(outBuf, outN); outBuf = new float[4096]; outN = 0; }
+                            outBuf[outN++] = (float)(acc / Math.Max(accCount, 1));
+                            if (outN == outBuf.Length) { session.Feed(outBuf, outN); outN = 0; }
                             phase -= step;
                             if (phase < step) { acc = 0; accCount = 0; }
                         }
                     }
                     Check(capture.GetNextPacketSize(out packet), "read mic");
                 }
-                if (outN > 0) { onAudio(outBuf, outN); outBuf = new float[4096]; outN = 0; }
-                var now = DateTime.UtcNow;
-                if (now > nextLevel)
-                {
-                    // 0-100 from -60..0 dBFS, before auto-gain, so Settings shows what the mic really hears.
-                    double db = 20 * Math.Log10(Math.Max(levelPeak, 1e-6));
-                    ApronVoice.Emit("{\"level\":" + (int)Math.Max(0, Math.Min(100, (db + 60) / 60 * 100)) + "}");
-                    levelPeak = 0;
-                    nextLevel = now.AddSeconds(3);
-                }
-                if (now > nextDeviceCheck)
-                {
-                    nextDeviceCheck = now.AddSeconds(3);
-                    IMMDevice current;
-                    string currentId = null;
-                    if (enumerator.GetDefaultAudioEndpoint(1, 0, out current) == 0) current.GetId(out currentId);
-                    if (currentId != id) return; // default mic changed: reopen
-                }
+                if (outN > 0) { session.Feed(outBuf, outN); outN = 0; }
                 Thread.Sleep(20);
             }
         }
@@ -486,7 +356,22 @@ class Mic
 
 static class Wav
 {
-    // Reads a 16-bit PCM .wav (any rate/channels) as 16 kHz mono samples.
+    /// 16 kHz mono 16-bit PCM as a .wav file.
+    public static byte[] Bytes(short[] s)
+    {
+        using (var ms = new MemoryStream())
+        using (var w = new BinaryWriter(ms))
+        {
+            w.Write(Encoding.ASCII.GetBytes("RIFF")); w.Write(36 + s.Length * 2); w.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+            w.Write(16); w.Write((short)1); w.Write((short)1); w.Write(16000); w.Write(32000); w.Write((short)2); w.Write((short)16);
+            w.Write(Encoding.ASCII.GetBytes("data")); w.Write(s.Length * 2);
+            foreach (var v in s) w.Write(v);
+            w.Flush();
+            return ms.ToArray();
+        }
+    }
+
+    /// Reads a 16-bit PCM .wav (any rate/channels) as 16 kHz mono samples.
     public static short[] Read16kMono(string path)
     {
         var b = File.ReadAllBytes(path);

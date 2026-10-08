@@ -23,10 +23,14 @@ const flashcards = require('./flashcards');
 const planner = require('./planner');
 const spotify = require('./spotify');
 const voice = require('./voice');
+const voiceCommand = require('./voiceCommand');
+const phone = require('./phone');
+const { shelfStore } = require('./shelf');
+const { screenshotWatcher } = require('./screenshots');
 const { appIconPng } = require('./icon');
 const updater = require('./updater');
 const hooksInstall = require('./hooksInstall');
-const { sanitize } = require('./settingsSchema');
+const { sanitize, NOTCH_ITEMS } = require('./settingsSchema');
 
 const WIN_W = 640;
 const WIN_H = 380;
@@ -37,6 +41,9 @@ let config = loadConfig();
 // What's currently in effect, so a config change (from Settings or the file) only
 // restarts the parts that actually changed.
 let applied = JSON.parse(JSON.stringify(config));
+// Global shortcuts actually registered (another app may own the first choice).
+let voiceShortcut = '';
+let micShortcut = '';
 
 function settingsPayload() {
   return {
@@ -51,7 +58,13 @@ function settingsPayload() {
     homeWidgets: config.homeWidgets,
     dockOrder: config.dockOrder,
     notchShow: config.notchShow,
+    notchPriority: config.notchPriority,
     dockHidden: config.dockHidden,
+    speedDial: (config.speedDial || []).map((c) => c.name),
+    hotspot: config.hotspot || '',
+    voice: config.voice !== false,
+    voiceShortcut,
+    micShortcut,
   };
 }
 
@@ -76,7 +89,13 @@ const state = {
   plan: null, // homework plan blocks
   planning: null, // { status: 'working' | 'error', error }
   spotify: null, // { connected, id, liked, playlists }
-  voice: null, // { status }
+  voice: null, // tap-to-talk: { status: 'idle' | 'listening' | 'thinking' | 'error' }
+  voiceLevel: 0, // mic level while listening, for the animation
+  phone: null, // { name, battery, connected } over Bluetooth
+  micMuted: null,
+  inbox: { messages: [], calls: [] }, // recent phone messages and missed calls
+  shelf: [], // files dropped on the notch
+  shot: null, // latest screenshot on the clipboard { thumb, width, height, at }
   flashcards: { count: 0 },
   apps: [], // pinned quick-access apps, with icons
   ask: null, // the latest "Ask Claude" answer
@@ -152,10 +171,21 @@ function createNotch(display) {
   const query = { primary: display.id === screen.getPrimaryDisplay().id ? '1' : '0' };
   if (process.env.APRON_EXPAND) query.expand = process.env.APRON_EXPAND;
   if (process.env.APRON_QUERY) query.q = process.env.APRON_QUERY;
+  // APRON_CONSOLE=1 copies the notch's console (and any script errors) to stdout, for debugging.
+  if (process.env.APRON_CONSOLE) {
+    win.webContents.on('console-message', (e, level, message, line, source) => {
+      const m = typeof e.message === 'string' ? e : { level, message, lineNumber: line, sourceId: source };
+      console.log(`[notch:${m.level}] ${m.message} (${path.basename(String(m.sourceId || ''))}:${m.lineNumber})`);
+    });
+  }
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'), { query });
   win.once('ready-to-show', () => {
     place(win, display);
     win.showInactive();
+    // APRON_NOTCH_SHOT=<file.png> saves just this window's pixels (for docs/debugging).
+    if (process.env.APRON_NOTCH_SHOT && query.primary === '1') {
+      setTimeout(async () => fs.writeFileSync(process.env.APRON_NOTCH_SHOT, (await win.webContents.capturePage()).toPNG()), Number(process.env.APRON_SHOT_DELAY) || 6000);
+    }
   });
   notches.set(display.id, { win, rect: null, hovering: false });
 }
@@ -417,7 +447,176 @@ async function refreshSpotify() {
   }
 }
 
-// ---------- voice ----------
+// ---------- voice (tap to talk) ----------
+
+/** Voice always uses Gemini (it understands audio), whatever you picked for Ask. */
+function geminiAi() {
+  return { provider: 'gemini', key: decrypt('geminiKeyEnc'), model: config.geminiModel || ai.DEFAULT_MODELS.gemini };
+}
+
+function toggleVoice() {
+  if (!sources.voice) return;
+  if (!geminiAi().key && sources.voice.status !== 'listening') {
+    emit({ type: 'info', text: 'Add a Gemini key in Settings → AI to use voice', trail: '🎙' });
+    return;
+  }
+  sources.voice.toggle();
+}
+
+async function onClip(clip) {
+  try {
+    const r = await voiceCommand.interpret(geminiAi(), clip, {
+      now: Date.now(),
+      apps: (config.pinnedApps || []).map((a) => a.name),
+      contacts: (config.speedDial || []).map((c) => c.name),
+    });
+    await runVoice(r);
+  } catch (err) {
+    emit({ type: 'info', text: err instanceof ai.AiError ? err.message : "Couldn't make that out. Try again", trail: '🎙' });
+  } finally {
+    sources.voice.done();
+  }
+}
+
+/** Does what Gemini heard. r: { transcript, action, minutes?, text?, answer? } */
+async function runVoice(r) {
+  const say = (text, trail = '🎙') => emit({ type: 'info', text, trail });
+  const what = r.text || r.transcript;
+  switch (r.action) {
+    case 'open': {
+      const hit = launcher.search(getIndex(), r.text || '').find((x) => x.kind === 'open' || x.kind === 'url');
+      if (!hit) return say(`Couldn't find "${(r.text || '').slice(0, 30)}"`);
+      if (hit.kind === 'url') {
+        if (isSafeUrl(hit.url)) shell.openExternal(hit.url);
+      } else openItem(hit.path);
+      return say(`Opening ${hit.title}`, '↗');
+    }
+    case 'search':
+    case 'note':
+    case 'todo':
+      return runLauncher({ kind: r.action, title: what });
+    case 'ask': {
+      if (r.answer) update('ask', { id: Date.now(), question: r.transcript || what, status: 'done', text: r.answer, who: 'Gemini' });
+      const pending = r.answer ? null : sources.ask.ask(what);
+      showAnswer();
+      return pending;
+    }
+    case 'askscreen': {
+      let image;
+      try {
+        image = await captureScreen();
+      } catch {
+        return say("Couldn't capture the screen");
+      }
+      const pending = sources.ask.ask(what, image);
+      showAnswer();
+      return pending;
+    }
+    case 'call':
+      return callContact(r.text || '');
+    case 'hotspot':
+      return joinHotspot();
+    case 'mute':
+      return sources.media.command('micmute');
+    case 'none':
+      return say(r.transcript ? `"${r.transcript.slice(0, 40)}" · not a command` : "Didn't catch that");
+    default:
+      return onVoice({ cmd: r.action, minutes: r.minutes });
+  }
+}
+
+// ---------- phone (through Phone Link) ----------
+
+function dial(number, name) {
+  const n = phone.cleanNumber(number);
+  if (!n) return;
+  shell.openExternal(`tel:${n}`);
+  emit({ type: 'info', text: `Calling ${name || n} · Phone Link`, trail: '☎' });
+}
+
+function callContact(who) {
+  const q = String(who || '').toLowerCase().trim();
+  const list = config.speedDial || [];
+  const hit = list.find((c) => c.name.toLowerCase() === q) || list.find((c) => q && (c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase())));
+  if (!hit) return emit({ type: 'info', text: q ? `No speed dial for "${who.slice(0, 20)}" · add it in Settings → Phone` : 'Who should I call?', trail: '☎' });
+  return dial(hit.number, hit.name);
+}
+
+async function joinHotspot() {
+  if (!config.hotspot) return emit({ type: 'info', text: 'Pick your hotspot in Settings → Phone', trail: '📶' });
+  emit({ type: 'info', text: `Joining ${config.hotspot}…`, trail: '📶' });
+  try {
+    await phone.connectWifi(config.hotspot);
+    emit({ type: 'info', text: `Connected to ${config.hotspot}`, trail: '📶' });
+  } catch (err) {
+    emit({ type: 'info', text: `Hotspot: ${err.message.slice(0, 60)}. Is it switched on?`, trail: '!' });
+  }
+}
+
+function findAppPath(name) {
+  if (!name) return null;
+  const hit = getIndex().find((i) => i.type === 'app' && i.name.toLowerCase() === String(name).toLowerCase());
+  return hit ? hit.path : null;
+}
+
+// ---------- end-of-class nudge ----------
+
+const nudgedClasses = new Set();
+function checkClassEnd() {
+  if (config.classNudge === false) return;
+  const now = Date.now();
+  const events = (state.calendar && state.calendar.events) || [];
+  const cur = events.find((e) => !e.allDay && e.start <= now && e.end > now && e.end - e.start <= 4 * 3600e3);
+  if (!cur) return;
+  const left = (cur.end - now) / 60e3;
+  const key = `${cur.title}|${cur.end}`;
+  if (left > 5 || left < 1 || nudgedClasses.has(key)) return;
+  nudgedClasses.add(key);
+  const next = events.find((e) => !e.allDay && e !== cur && e.start >= cur.end - 60e3 && e.start - cur.end < 60 * 60e3);
+  emit({
+    type: 'classend',
+    title: cur.title,
+    left: Math.round(left),
+    next: next ? { title: next.title, location: next.location || '', start: next.start } : null,
+  });
+}
+
+// ---------- shelf ----------
+
+const shelfIcons = new Map();
+async function publishShelf(items) {
+  for (const it of items) {
+    if (shelfIcons.has(it.path)) continue;
+    try {
+      shelfIcons.set(it.path, await app.getFileIcon(it.path, { size: 'normal' }));
+    } catch {
+      // generic tile
+    }
+  }
+  update(
+    'shelf',
+    items.map((it) => ({ ...it, icon: shelfIcons.has(it.path) ? shelfIcons.get(it.path).toDataURL() : null })),
+  );
+}
+
+function saveScreenshot() {
+  const png = stores.shots && stores.shots.png();
+  if (!png) return;
+  const dir = path.join(app.getPath('pictures'), 'Screenshots');
+  const pad = (n) => String(n).padStart(2, '0');
+  const d = new Date();
+  const file = path.join(dir, `Apron ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}.${pad(d.getMinutes())}.${pad(d.getSeconds())}.png`);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, png);
+    if (stores.shelf) stores.shelf.add([file]);
+    emit({ type: 'info', text: 'Saved to Pictures › Screenshots (and the shelf)', trail: '✓' });
+  } catch (err) {
+    emit({ type: 'info', text: `Couldn't save: ${err.message}`, trail: '!' });
+  }
+}
+
+// ---------- voice commands (also used by tap-to-talk) ----------
 
 function onVoice(c) {
   const say = (text, trail = '🎙') => emit({ type: 'info', text, trail });
@@ -555,6 +754,15 @@ function openLauncherOn(displayId) {
   n.win.webContents.send('island:toggle');
 }
 
+/** Opens the launcher's answer view (for a spoken question) on the screen you're on. */
+function showAnswer() {
+  const n = notches.get(screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).id) || notches.values().next().value;
+  if (!n || n.win.isDestroyed()) return;
+  n.win.setFocusable(true);
+  n.win.focus();
+  n.win.webContents.send('island:answer');
+}
+
 let launcherIndex = null;
 let launcherBuiltAt = 0;
 
@@ -620,6 +828,12 @@ async function runLauncher(item) {
         update('ask', { id: Date.now(), question: text, status: 'error', text: `Couldn't capture the screen: ${err.message}` });
       }
       break;
+    case 'askshot': {
+      const img = stores.shots && stores.shots.jpeg();
+      if (!img) update('ask', { id: Date.now(), question: text, status: 'error', text: 'No screenshot to ask about. Take one with Win+Shift+S.' });
+      else sources.ask.ask(text, img);
+      break;
+    }
     case 'translate': {
       const id = Date.now();
       update('ask', { id, question: `Translate: ${text}`, status: 'streaming', text: '' });
@@ -689,13 +903,27 @@ function applyConfig(next) {
   refreshWatch();
   if (changed('startWithWindows')) applyLoginItem();
   if (changed('displays', 'display', 'offsetY')) syncNotches();
-  if (changed('voice') && sources.voice) sources.voice.setEnabled(config.voice === true);
+  if (changed('voice')) registerVoiceShortcut();
   if (changed('flashcardsFolder', 'notesFile')) loadFlashcards();
   if (changed('classMode')) checkClassMode();
   if (changed('pinnedApps')) refreshApps();
   update('settings', settingsPayload());
   rebuildTray();
   sendSettings();
+}
+
+// ---------- tap-to-talk shortcut ----------
+
+function registerVoiceShortcut() {
+  if (voiceShortcut) globalShortcut.unregister(voiceShortcut.replace('Ctrl', 'Control'));
+  voiceShortcut = '';
+  if (config.voice === false) return;
+  for (const combo of ['Control+Alt+V', 'Alt+Shift+V']) {
+    if (globalShortcut.register(combo, toggleVoice)) {
+      voiceShortcut = combo.replace('Control', 'Ctrl');
+      break;
+    }
+  }
 }
 
 // ---------- tray ----------
@@ -763,6 +991,9 @@ function settingsSnapshot() {
     hasSpotify: Boolean(config.spotifyRefreshEnc),
     flashcards: state.flashcards,
     voice: state.voice,
+    voiceShortcut,
+    micShortcut,
+    phone: state.phone,
     notesTarget: notes.target(config).label,
     version: app.getVersion(),
     configPath: CONFIG_PATH,
@@ -807,6 +1038,9 @@ function openSettings() {
     // APRON_SETTINGS_SHOT=<file.png> saves a screenshot of the window (for docs/debugging).
     if (process.env.APRON_SETTINGS_SHOT) {
       setTimeout(async () => {
+        // APRON_SETTINGS_FIND=<section title> scrolls to that section first.
+        const find = process.env.APRON_SETTINGS_FIND;
+        if (find) await settingsWin.webContents.executeJavaScript(`[...document.querySelectorAll('h2')].find((x) => x.textContent.includes(${JSON.stringify(find)}))?.scrollIntoView()`);
         const img = await settingsWin.webContents.capturePage();
         fs.writeFileSync(process.env.APRON_SETTINGS_SHOT, img.toPNG());
       }, 1500);
@@ -902,9 +1136,62 @@ ipcMain.on('island:open-app', (_e, file) => {
   const hit = (config.pinnedApps || []).find((a) => a.path === String(file));
   if (hit && (isStoreApp(hit.path) || fs.existsSync(hit.path))) openItem(hit.path);
 });
+// 'auto' / 'rotate', or a notch item (right-click on a widget) to put at the top of the list.
 ipcMain.on('island:notch', (_e, mode) => {
-  const clean = sanitize({ notchShow: mode });
-  if (clean.notchShow) setConfig(clean);
+  const m = String(mode);
+  if (m === 'auto' || m === 'rotate') return setConfig({ notchShow: m });
+  if (!NOTCH_ITEMS.includes(m)) return undefined;
+  const group = m === 'class' ? ['class', 'soon', 'next'] : [m];
+  const rest = (config.notchPriority || NOTCH_ITEMS).filter((x) => !group.includes(x));
+  return setConfig({ notchShow: 'auto', notchPriority: [...group, ...rest] });
+});
+ipcMain.on('island:voice', (_e, op) => {
+  if (op === 'cancel') sources.voice && sources.voice.cancel();
+  else toggleVoice();
+});
+ipcMain.on('island:mic', () => sources.media && sources.media.command('micmute'));
+ipcMain.on('island:phone', (_e, op, arg) => {
+  const inbox = stores.inbox;
+  if (op === 'reply') {
+    const m = inbox.message(String(arg));
+    if (!m) return;
+    const t = phone.replyTarget(m, findAppPath);
+    if (t.app) openItem(t.app);
+    else shell.openExternal(t.url);
+  } else if (op === 'callback') {
+    const c = inbox.call(String(arg));
+    if (!c) return;
+    if (c.number) dial(c.number, c.name);
+    else shell.openExternal('ms-phone:');
+  } else if (op === 'dismiss') inbox.dismiss(String(arg));
+  else if (op === 'dial') {
+    const c = (config.speedDial || [])[Number(arg)];
+    if (c) dial(c.number, c.name);
+  } else if (op === 'hotspot') joinHotspot();
+  else if (op === 'open') shell.openExternal('ms-phone:');
+});
+ipcMain.on('island:shelf', (_e, op, arg) => {
+  const sh = stores.shelf;
+  if (op === 'add') {
+    const n = sh.add(Array.isArray(arg) ? arg.map(String).slice(0, 20) : []);
+    if (n) emit({ type: 'info', text: `${n} item${n > 1 ? 's' : ''} on the shelf`, trail: '⇩' });
+  } else if (op === 'open' && sh.has(String(arg))) shell.openPath(String(arg));
+  else if (op === 'reveal' && sh.has(String(arg))) shell.showItemInFolder(String(arg));
+  else if (op === 'remove') sh.remove(String(arg));
+  else if (op === 'clear') sh.clear();
+});
+// Dragging a shelf item out of the notch into another app.
+ipcMain.on('island:shelf-drag', (e, file) => {
+  const p = String(file);
+  if (!stores.shelf || !stores.shelf.has(p)) return;
+  e.sender.startDrag({ file: p, icon: shelfIcons.get(p) || nativeImage.createFromBuffer(appIconPng(32)) });
+});
+ipcMain.on('island:shot', (_e, op) => {
+  if (op === 'save') saveScreenshot();
+  else if (op === 'dismiss') {
+    update('shot', null);
+    if (stores.shots) stores.shots.forget();
+  }
 });
 // Drag-to-reorder from the notch.
 ipcMain.on('island:order', (_e, kind, list) => {
@@ -965,6 +1252,7 @@ ipcMain.handle('island:share', async () => {
 
 // From the Settings window.
 ipcMain.handle('settings:get', () => settingsSnapshot());
+ipcMain.handle('settings:wifi', () => phone.wifiProfiles());
 ipcMain.handle('settings:set', (_e, patch) => {
   try {
     if (patch && typeof patch.aiKey === 'string') setKey('aiKeyEnc', patch.aiKey.slice(0, 300));
@@ -1039,6 +1327,14 @@ app.whenReady().then(() => {
     }
   }
 
+  // Ctrl+Alt+M mutes / unmutes your mic from anywhere.
+  for (const combo of ['Control+Alt+M', 'Alt+Shift+M']) {
+    if (globalShortcut.register(combo, () => sources.media && sources.media.command('micmute'))) {
+      micShortcut = combo.replace('Control', 'Ctrl');
+      break;
+    }
+  }
+
   const lyricSource = lyrics.create((v) => update('lyrics', v));
   sources.media = media.start(
     (v) => {
@@ -1052,6 +1348,17 @@ app.whenReady().then(() => {
       if (sources.screentime) sources.screentime.onForeground(fg);
     },
     (p) => update('privacy', config.privacyDots === false ? { mic: [], cam: [] } : p),
+    (d) => {
+      if ('phone' in d) {
+        update('phone', d.phone);
+        sendSettings();
+      }
+      if ('micMuted' in d) {
+        const was = state.micMuted;
+        update('micMuted', d.micMuted);
+        if (was != null && d.micMuted != null && was !== d.micMuted) emit({ type: 'mic', muted: d.micMuted });
+      }
+    },
   );
   sources.lockdown = lockdown.create(config, sources.media, (label) => emit({ type: 'blocked', text: `${label} is blocked`, trail: 'FOCUS' }));
   sources.screentime = screentime.create(
@@ -1072,6 +1379,7 @@ app.whenReady().then(() => {
         checkClassMode();
         checkSummary();
         checkPlan();
+        checkClassEnd();
       }, 30e3),
     ),
   };
@@ -1088,28 +1396,18 @@ app.whenReady().then(() => {
     saveRefresh: (tok) => setConfig({ spotifyRefreshEnc: tok ? safeStorage.encryptString(tok).toString('base64') : '' }),
     openUrl: (u) => shell.openExternal(u),
   });
-  let voiceStatus = {};
-  sources.voice = voice.create(
-    onVoice,
-    (v) => {
-      voiceStatus = v;
+  sources.voice = voice.create({
+    onState: (v) => {
       update('voice', v);
+      if (v.status === 'idle' && v.heard === false) emit({ type: 'info', text: "Didn't hear anything", trail: '🎙' });
+      if (v.status === 'error') emit({ type: 'info', text: `Voice: ${v.error}`, trail: '!' });
       sendSettings();
     },
-    (hint) => {
-      if (hint.wake) emit({ type: 'info', text: 'Listening…', trail: '🎙' });
-      else if (hint.unsure) emit({ type: 'info', text: "Didn't catch that. Try again", trail: '🎙' });
-      else if (hint.level !== undefined) {
-        // Mic level for Settings (0-100); only re-sent when it changes noticeably.
-        if (!state.voice || state.voice.level === undefined || Math.abs((state.voice.level || 0) - hint.level) >= 3) {
-          update('voice', { ...voiceStatus, level: hint.level });
-          sendSettings();
-        }
-      }
-    },
-    { logFile: path.join(app.getPath('userData'), 'voice.log') },
-  );
-  sources.voice.setEnabled(config.voice === true);
+    onLevel: (level) => update('voiceLevel', level),
+    onClip: (clip) => onClip(clip),
+    logFile: path.join(app.getPath('userData'), 'voice.log'),
+  });
+  registerVoiceShortcut();
   loadFlashcards();
   refreshApps();
   loadStoreApps();
@@ -1117,6 +1415,7 @@ app.whenReady().then(() => {
   sources.cards = { stop: clearInterval.bind(null, setInterval(loadFlashcards, 30 * 60e3)) };
   sources.claude = claude.start(config.claudePort, (v) => update('claude', v), { approvals: () => config.claudeApprovals !== false });
   sources.notifications = notifications.start(config, (n) => {
+    if (stores.inbox) stores.inbox.add(n);
     // Distracting apps stay quiet during a locked-down focus session.
     if (state.timer && state.timer.lockdown && lockdown.judge({ exe: 'chrome', title: n.name }, lockdown.compile(config))) return;
     // Class mode: only calls and one-time codes get through.
@@ -1129,6 +1428,13 @@ app.whenReady().then(() => {
   stores.todos = todoStore(path.join(userData, 'todos.json'), (v) => update('todos', v));
   stores.stats = statsStore(path.join(userData, 'stats.json'), (v) => update('stats', v));
   stores.plan = planner.store(path.join(userData, 'plan.json'), (v) => update('plan', v));
+  stores.inbox = phone.inbox((v) => update('inbox', v));
+  stores.shelf = shelfStore(path.join(userData, 'shelf.json'), (items) => publishShelf(items));
+  stores.shots = screenshotWatcher(clipboard, (shot) => {
+    if (config.screenshotPeek === false) return;
+    update('shot', shot);
+    emit({ type: 'shot' });
+  });
   stores.timer = timerStore(
     path.join(userData, 'timer.json'),
     (v) => {

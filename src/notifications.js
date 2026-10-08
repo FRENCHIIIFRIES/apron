@@ -27,7 +27,7 @@ const SKIP = /claude|apron|electron|windows\.|microsoft\.windows|securityhealth|
 function appLabel(aumid) {
   const id = String(aumid || '');
   const phone = id.match(/YourPhoneNotifications_(.+)$/);
-  if (phone) return { name: KNOWN[phone[1]] || phone[1].split('.').pop(), phone: true };
+  if (phone) return { name: KNOWN[phone[1]] || phone[1].split('.').pop(), phone: true, pkg: phone[1] };
   if (/whatsapp/i.test(id)) return { name: 'WhatsApp', phone: false };
   if (/discord/i.test(id)) return { name: 'Discord', phone: false };
   if (/telegram/i.test(id)) return { name: 'Telegram', phone: false };
@@ -58,6 +58,11 @@ function detectCode(title, body) {
 /** Phone Link shows incoming calls as notifications from its main app. */
 function isCall(aumid, title, body) {
   return /YourPhone/i.test(aumid) && !/YourPhoneNotifications_/i.test(aumid) && /\b(incoming (voice |video )?call|is calling|calling\b)/i.test(`${title} ${body}`);
+}
+
+/** Phone Link's "Missed call" notifications. */
+function isMissedCall(aumid, title, body) {
+  return /YourPhone/i.test(aumid) && /\bmissed (voice |video )?call\b/i.test(`${title} ${body}`);
 }
 
 function filetimeToMs(ft) {
@@ -94,14 +99,16 @@ function start(config, onNotification) {
         if (SKIP.test(r.app)) continue;
         const { title, body } = parsePayload(r.payload);
         if (!title && !body) continue;
-        const call = isCall(r.app, title, body);
+        const missed = isMissedCall(r.app, title, body);
+        const call = !missed && isCall(r.app, title, body);
         onNotification({
-          ...(call ? { name: 'Phone', phone: true } : appLabel(r.app)),
+          ...(call || missed ? { name: 'Phone', phone: true } : appLabel(r.app)),
           title,
           body,
           at: filetimeToMs(r.t),
           code: detectCode(title, body),
           call,
+          missed,
         });
       }
     } catch (err) {
@@ -121,4 +128,4 @@ function start(config, onNotification) {
   };
 }
 
-module.exports = { start, parsePayload, appLabel, filetimeToMs, detectCode, isCall };
+module.exports = { start, parsePayload, appLabel, filetimeToMs, detectCode, isCall, isMissedCall };

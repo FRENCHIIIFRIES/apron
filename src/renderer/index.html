@@ -33,10 +33,13 @@
           <button data-tab="todo" data-icon="check" title="To-do"><span class="badge" id="todo-badge"></span></button>
           <button data-tab="clip" data-icon="clip" title="Clipboard &amp; codes"></button>
           <button data-tab="sys" data-icon="sys" title="System &amp; today"></button>
+          <button data-tab="phone" data-icon="phone" title="Phone: battery, messages, calls, hotspot"><span class="badge" id="phone-badge"></span></button>
+          <button data-tab="shelf" data-icon="shelf" title="Shelf: drop files on the notch"></button>
         </div>
         <span class="tab-name" id="tab-name"></span>
         <button class="pill-btn update-btn" id="update-btn" hidden>Update</button>
         <span class="clock" id="clock"></span>
+        <button class="mic-btn" id="mic-btn" title="Talk to Apron (Ctrl+Alt+V)"></button>
         <button class="search-btn" id="search-btn" title="Search, open apps, ask Claude (Ctrl+Alt+Space)">⌕</button>
         <button class="swatch-toggle" id="swatch-toggle" title="Accent colour"></button>
         <button class="gear" id="gear" title="Settings">⚙</button>
@@ -81,6 +84,14 @@
 
       <section class="panel" data-panel="clip">
         <div class="list" id="clip"></div>
+      </section>
+
+      <section class="panel" data-panel="phone">
+        <div class="list" id="phone"></div>
+      </section>
+
+      <section class="panel" data-panel="shelf">
+        <div class="list" id="shelf"></div>
       </section>
     </div>
     </div>

@@ -230,3 +230,9 @@ section h2::before { content: "● "; color: var(--accent); }
 .chips button.chip { cursor: pointer; }
 .chips button.chip:hover { box-shadow: inset 0 0 0 1px var(--accent); }
 .wl-row.off .wl-name { color: var(--muted); text-decoration: line-through; }
+
+/* notch priority + phone */
+.wl-rank { flex: none; width: 18px; color: var(--accent); font-weight: 700; }
+.wl-name small { color: var(--muted); font-weight: 400; }
+select.text { appearance: none; cursor: pointer; max-width: 220px; }
+select.text option { background: #000; color: #fff; }

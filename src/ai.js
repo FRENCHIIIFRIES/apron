@@ -26,13 +26,16 @@ function friendly(provider, status, message) {
 
 // ---------- Gemini (REST) ----------
 
-function geminiBody({ system, text, image, json }) {
+/** thinking: e.g. 'minimal' for quick jobs like voice commands, where thinking only adds seconds. */
+function geminiBody({ system, text, image, audio, json, thinking }) {
   const parts = [];
   if (image) parts.push({ inline_data: { mime_type: 'image/jpeg', data: image } });
+  if (audio) parts.push({ inline_data: { mime_type: 'audio/wav', data: audio } });
   parts.push({ text });
   const body = { contents: [{ role: 'user', parts }] };
   if (system) body.systemInstruction = { parts: [{ text: system }] };
   if (json) body.generationConfig = { responseMimeType: 'application/json', responseJsonSchema: json };
+  if (thinking) body.generationConfig = { ...(body.generationConfig || {}), thinkingConfig: { thinkingLevel: thinking } };
   return body;
 }
 
@@ -44,15 +47,18 @@ function geminiText(data) {
   return ((cand.content && cand.content.parts) || []).filter((p) => p.text && !p.thought).map((p) => p.text).join('');
 }
 
-/** POSTs to the chosen model, moving down the fallback list if it's overloaded or slow. */
-async function geminiFetch(ai, method, body, signal) {
+/**
+ * POSTs to the chosen model, moving down the fallback list if it's overloaded or slow.
+ * models / timeout override the list and the per-model deadline (voice wants a fast answer).
+ */
+async function geminiFetch(ai, method, body, signal, { models: only, timeout = FIRST_BYTE_TIMEOUT } = {}) {
   const first = ai.model || DEFAULT_MODELS.gemini;
-  const models = [first, ...GEMINI_FALLBACKS.filter((m) => m !== first)];
+  const models = only || [first, ...GEMINI_FALLBACKS.filter((m) => m !== first)];
   let lastError = null;
   for (const model of models) {
     // Give each model a deadline for its first byte; the stream itself only stops on `signal`.
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(new Error('timeout')), FIRST_BYTE_TIMEOUT);
+    const timer = setTimeout(() => ctl.abort(new Error('timeout')), timeout);
     const onAbort = () => ctl.abort(signal.reason);
     if (signal) signal.addEventListener('abort', onAbort, { once: true });
     let res;
@@ -158,7 +164,7 @@ async function json(ai, opts, schema) {
       throw claudeError(err);
     }
   }
-  const res = await geminiFetch(ai, 'generateContent', geminiBody({ ...opts, json: schema }));
+  const res = await geminiFetch(ai, 'generateContent', geminiBody({ ...opts, json: schema }), undefined, { models: opts.models, timeout: opts.timeout });
   return JSON.parse(geminiText(await res.json()));
 }
 

@@ -2,7 +2,7 @@ const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const COMMANDS = new Set(['toggle', 'next', 'prev', 'shuffle', 'repeat', 'volup', 'voldown', 'mute', 'watch on', 'watch off']);
+const COMMANDS = new Set(['toggle', 'next', 'prev', 'shuffle', 'repeat', 'volup', 'voldown', 'mute', 'watch on', 'watch off', 'micmute']);
 const COMMAND_RE = /^(vol (100|[1-9]?\d)|(closetab|minimize) \d+)$/;
 const SOURCE = path.join(__dirname, 'media', 'IslandMedia.cs');
 const BINARY = path.join(__dirname, '..', 'bin', 'apron-media.exe');
@@ -20,6 +20,7 @@ function ensureBinary() {
     path.join(winmd, 'Windows.Foundation.winmd'),
     path.join(winmd, 'Windows.Media.winmd'),
     path.join(winmd, 'Windows.Storage.winmd'),
+    path.join(winmd, 'Windows.Devices.winmd'),
   ];
   fs.mkdirSync(path.dirname(BINARY), { recursive: true });
   execFileSync(
@@ -30,8 +31,11 @@ function ensureBinary() {
   return BINARY;
 }
 
-/** onUpdate(mediaStatus); onForeground({hwnd, exe, title}) while `watch on`; onPrivacy({mic, cam}). */
-function start(onUpdate, onForeground = () => {}, onPrivacy = () => {}) {
+/**
+ * onUpdate(mediaStatus); onForeground({hwnd, exe, title}) while `watch on`; onPrivacy({mic, cam});
+ * onDevice({ phone: { name, battery, connected } | null } | { micMuted: bool | null }).
+ */
+function start(onUpdate, onForeground = () => {}, onPrivacy = () => {}, onDevice = () => {}) {
   let proc = null;
   let stopped = false;
 
@@ -60,6 +64,8 @@ function start(onUpdate, onForeground = () => {}, onPrivacy = () => {}) {
           const msg = JSON.parse(line);
           if (msg.fg) onForeground(msg.fg);
           else if (msg.priv) onPrivacy(msg.priv);
+          else if ('phone' in msg) onDevice({ phone: msg.phone });
+          else if ('micmuted' in msg) onDevice({ micMuted: msg.micmuted });
           else onUpdate({ status: 'ok', ...msg });
         } catch {
           // ignore a malformed line

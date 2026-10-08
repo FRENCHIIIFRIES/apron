@@ -52,7 +52,7 @@ async function action(name, message) {
 const section = (title, ...items) => h('section', {}, h('h2', {}, title), ...items);
 const label = (title, sub) => h('div', { class: 'label' }, h('b', {}, title), sub && h('small', {}, sub));
 
-const DEFAULT_OFF = new Set(['artColor', 'sleepReminder', 'translateCopies', 'voice']);
+const DEFAULT_OFF = new Set(['artColor', 'sleepReminder', 'translateCopies']);
 function toggle(title, sub, key, { invert = false } = {}) {
   const on = DEFAULT_OFF.has(key) ? snap.config[key] === true : snap.config[key] !== false;
   const value = invert ? !on : on;
@@ -395,14 +395,18 @@ function guide() {
   const rows = [
     ['Open it', 'Hover the notch at the top of the screen. You land on Home; the icons along the top switch views.'],
     ['Home screen', 'Widgets for music, your apps, next class, weather, homework, focus, to-dos, Claude and system. Click one to open it. Drag widgets (and the dock icons) to rearrange them.'],
-    ['Closed notch', 'Choose what it keeps showing below (no more cycling). Or right-click a widget on Home → it stays in the notch.'],
+    ['Closed notch', 'Put what matters most at the top of the priority list below; the notch shows the first one that has something to show. Right-click a widget on Home to move it to the top.'],
     ['Quick apps', 'Pin apps with 📌 in the launcher or below; they appear as icons on Home and when you open the launcher. Right-click an icon to unpin.'],
     ['Search & launcher', `${k} (or ⌕ in the notch). Type an app, file or website and press Enter. Anything else searches Google.`],
     ['Ask AI (Gemini)', 'In the launcher type  ? your question . To ask about what is on your screen, type  ?? what does this graph show . Needs your free Gemini key (Launcher, notes & AI below).'],
     ['Notes, to-dos, translate', 'In the launcher:  n buy graph paper  saves a note,  t maths homework  adds a to-do,  tr नमस्ते  translates.'],
     ['Focus', 'Focus icon → Pomodoro. Lockdown closes distracting tabs. Breaks show flashcards from your notes (write  question :: answer  in Obsidian).'],
     ['Homework plan', 'Calendar icon → Plan my homework. The AI fits focus blocks into your free time; the notch tells you when to start.'],
-    ['Voice', 'Turn on "Hey Apron" below, then say: "Hey Apron, ten minute timer", "start pomodoro", "next song", "what\'s next".'],
+    ['Talk to Apron', `Press ${snap.voiceShortcut || 'Ctrl+Alt+V'} (or 🎙 in the notch) and just say it: "25 minute timer", "skip this song", "what's my next class", "open Spotify", "what is osmosis", "remind me to do maths" (to-do). It stops listening when you stop talking.`],
+    ['Phone', 'Phone icon in the notch: your phone battery, missed calls (Call back), texts and WhatsApps (Reply), speed dial and one-tap hotspot. Set them up under Phone below.'],
+    ['Shelf', 'Drag files onto the notch to park them on the Shelf; drag them back out into Classroom, email or a folder. Click to open, right-click to remove.'],
+    ['Screenshots', 'Win+Shift+S → the notch peeks your screenshot. Hover it for Ask AI (ask about the screenshot) and Save (Pictures › Screenshots).'],
+    ['Mic mute', `${snap.micShortcut || 'Ctrl+Alt+M'} mutes or unmutes your mic anywhere (red dot by the notch while muted).`],
     ['Music', 'Music icon: shuffle, repeat, volume (scroll), lyrics, Share. Connect Spotify below for ♥ and playlists.'],
   ];
   return section('How to use', ...rows.map(([t, d]) => h('div', { class: 'item' }, label(t, d))));
@@ -410,35 +414,73 @@ function guide() {
 
 // ---------- closed notch, dock, quick apps ----------
 
-const NOTCH_OPTIONS = [
-  ['auto', 'Auto', 'Song while music plays, otherwise your next class, otherwise the clock'],
-  ['music', 'Music', ''],
-  ['next', 'Next class', ''],
-  ['weather', 'Weather', ''],
-  ['due', 'Homework due', ''],
-  ['todo', 'To-do', ''],
-  ['prs', 'Claude & PRs', ''],
-  ['system', 'System', ''],
-  ['countdown', 'Countdown', ''],
-  ['clock', 'Clock', ''],
-  ['rotate', 'Rotate', 'Cycles through everything'],
-];
+const NOTCH_ITEMS = {
+  music: ['Music', 'the song while something plays'],
+  class: ['Current class', 'with minutes left'],
+  soon: ['Starting soon', 'a class in the next 10 minutes'],
+  next: ['Next class', 'later today'],
+  due: ['Homework due', 'within 3 days'],
+  countdown: ['Countdown', 'days to your exam'],
+  rain: ['Rain warning', 'rain at your next class'],
+  phone: ['Phone battery', 'when your phone is connected'],
+  weather: ['Weather', ''],
+  todo: ['To-do', 'your first open one'],
+  prs: ['Claude & PRs', 'open pull requests'],
+  system: ['System', 'CPU, RAM, battery'],
+  clock: ['Clock', 'date and time'],
+};
 
 function notchSection() {
-  const cur = snap.config.notchShow || 'auto';
-  const desc = (NOTCH_OPTIONS.find((o) => o[0] === cur) || [])[2] || 'Always shows this (falls back to the clock if there is nothing to show)';
+  const c = snap.config;
+  const on = (c.notchPriority && c.notchPriority.length ? c.notchPriority : Object.keys(NOTCH_ITEMS)).filter((x) => NOTCH_ITEMS[x]);
+  const off = Object.keys(NOTCH_ITEMS).filter((x) => !on.includes(x));
+  const save = (list) => set({ notchPriority: list });
+  const move = (i, d) => {
+    const list = [...on];
+    const j = i + d;
+    if (j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    save(list);
+  };
+  const rotate = c.notchShow === 'rotate';
   return section(
     'Closed notch',
     h(
       'div',
+      { class: 'item' },
+      label('Mode', rotate ? 'Takes turns through everything on the list that has something to show' : 'Shows the first thing on the list that has something to show, and stays on it'),
+      h(
+        'div',
+        { class: 'seg' },
+        h('button', { class: rotate ? '' : 'on', onclick: () => set({ notchShow: 'auto' }, 'Priority') }, 'Priority'),
+        h('button', { class: rotate ? 'on' : '', onclick: () => set({ notchShow: 'rotate' }, 'Rotate') }, 'Rotate'),
+      ),
+    ),
+    h(
+      'div',
       { class: 'item stack' },
-      label('Show', `${desc}. Alerts (Claude needs you, calls, codes, timers) still pop up. Tip: right-click a widget on Home to pick it.`),
-      h('div', { class: 'chips' }, ...NOTCH_OPTIONS.map(([id, name]) => h('button', { class: `chip${cur === id ? ' blocked' : ''}`, onclick: () => set({ notchShow: id }, `Notch: ${name}`) }, name))),
+      label('Priority', 'Top wins. Alerts (Claude needs you, calls, codes, timers, voice) always come first. The clock shows when nothing else does. Tip: right-click a widget on Home to move it to the top.'),
+      h(
+        'div',
+        { class: 'widget-list' },
+        ...on.map((id, i) =>
+          h(
+            'div',
+            { class: 'wl-row' },
+            h('span', { class: 'wl-rank' }, String(i + 1)),
+            h('span', { class: 'wl-name' }, NOTCH_ITEMS[id][0], NOTCH_ITEMS[id][1] && h('small', {}, ` · ${NOTCH_ITEMS[id][1]}`)),
+            h('button', { class: 'x', title: 'Move up', onclick: () => move(i, -1) }, '↑'),
+            h('button', { class: 'x', title: 'Move down', onclick: () => move(i, 1) }, '↓'),
+            h('button', { class: 'x', title: 'Never show', onclick: () => save(on.filter((x) => x !== id)) }, '×'),
+          ),
+        ),
+      ),
+      off.length ? h('div', { class: 'chips' }, ...off.map((id) => h('button', { class: 'chip', onclick: () => save([...on, id]) }, `+ ${NOTCH_ITEMS[id][0]}`))) : null,
     ),
   );
 }
 
-const TAB_LABELS = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude Code', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System' };
+const TAB_LABELS = { home: 'Home', media: 'Music', calendar: 'Calendar', claude: 'Claude Code', timer: 'Focus', todo: 'To-do', clip: 'Clipboard', sys: 'System', phone: 'Phone', shelf: 'Shelf' };
 
 function dockSection() {
   const order = (snap.config.dockOrder && snap.config.dockOrder.length ? snap.config.dockOrder : Object.keys(TAB_LABELS)).filter((t) => TAB_LABELS[t]);
@@ -558,6 +600,8 @@ const WIDGET_INFO = {
   stats: "Today's focus",
   plan: 'Homework plan',
   clip: 'Last copied',
+  phone: 'Phone battery & missed calls',
+  shelf: 'Shelf (files you dropped, wide)',
 };
 
 function homeSection() {
@@ -648,14 +692,14 @@ function extrasSection() {
       'div',
       { class: 'item' },
       label(
-        '"Hey Apron" voice commands',
-        v.status === 'listening'
-          ? `Listening · mic level ${v.level == null ? '…' : v.level}${v.level != null && v.level < 5 ? ' (very quiet: talk, and if it stays near 0 set your mic as the default in Windows Settings → Sound → Input)' : ''}. Say "Hey Apron" or just "Apron", then the command. Offline; nothing is recorded.`
-          : v.status === 'error'
-            ? `Problem: ${v.error}`
-            : 'Say "Hey Apron, ten minute timer". Uses your mic while on (the orange dot shows).',
+        `Talk to Apron · ${snap.voiceShortcut || 'Ctrl+Alt+V'}`,
+        v.status === 'error'
+          ? `Problem: ${v.error}`
+          : !snap.hasGeminiKey
+            ? 'Needs your Gemini key (Launcher, notes & AI above). Then press the shortcut or 🎙 in the notch and talk.'
+            : 'Press it (or 🎙 in the notch) and talk normally, in any accent. It stops when you stop. The mic is only on while you talk, and the clip goes to Gemini to be understood, then is thrown away.',
       ),
-      h('button', { class: `switch${c.voice ? ' on' : ''}`, role: 'switch', 'aria-label': 'Voice', onclick: () => set({ voice: !c.voice }) }),
+      h('button', { class: `switch${c.voice !== false ? ' on' : ''}`, role: 'switch', 'aria-label': 'Talk to Apron', onclick: () => set({ voice: c.voice === false }) }),
     ),
     toggle('Translate what I copy', 'Copy Hindi (or other non-English) text and the notch shows the English', 'translateCopies'),
     h(
@@ -700,6 +744,51 @@ function extrasSection() {
             ),
       ),
     ),
+  );
+}
+
+function phoneSection() {
+  const c = snap.config;
+  const p = snap.phone;
+  const dialList = c.speedDial || [];
+  const name = h('input', { class: 'text', placeholder: 'Name (e.g. Mom)' });
+  const number = h('input', { class: 'text', placeholder: 'Number (e.g. +91 98765 43210)' });
+  const addDial = () => {
+    if (!name.value.trim() || !number.value.trim()) return;
+    set({ speedDial: [...dialList, { name: name.value.trim(), number: number.value.trim() }] }, `${name.value.trim()} added`);
+  };
+  number.addEventListener('keydown', (e) => e.key === 'Enter' && addDial());
+  const wifi = h('select', { class: 'text', onchange: (e) => set({ hotspot: e.target.value }, e.target.value ? `Hotspot: ${e.target.value}` : 'Hotspot off') }, h('option', { value: '' }, c.hotspot || 'Loading saved Wi-Fi…'));
+  window.apron.wifi().then((list) => {
+    wifi.replaceChildren(h('option', { value: '' }, '— none —'), ...list.map((n) => h('option', { value: n }, n)));
+    wifi.value = c.hotspot || '';
+  });
+  return section(
+    'Phone',
+    h(
+      'div',
+      { class: 'item' },
+      label(p ? p.name : 'Your phone', p ? `Battery ${p.battery}%${p.connected === false ? ' (not nearby right now)' : ''} · from the Bluetooth link Phone Link uses for calls` : 'Pair your phone in Phone Link (with calls set up over Bluetooth) to see its battery in the notch'),
+      h('span', { class: `status${p && p.connected !== false ? ' ok' : ''}` }, p ? (p.connected === false ? 'Away' : 'Connected') : 'Not found'),
+    ),
+    h(
+      'div',
+      { class: 'item stack' },
+      label('Speed dial', 'One tap (or "call Mom" out loud) calls through Phone Link. Numbers stay on this PC.'),
+      dialList.length
+        ? h(
+            'div',
+            { class: 'widget-list' },
+            ...dialList.map((d, i) =>
+              h('div', { class: 'wl-row' }, h('span', { class: 'wl-name' }, d.name, h('small', {}, ` · ${d.number}`)), h('button', { class: 'x', title: 'Remove', onclick: () => set({ speedDial: dialList.filter((_, j) => j !== i) }) }, '×')),
+            ),
+          )
+        : null,
+      h('div', { class: 'row-line' }, name, number, h('button', { class: 'btn', onclick: addDial }, 'Add')),
+    ),
+    h('div', { class: 'item' }, label('Phone hotspot', 'Turn on your phone\'s hotspot, then tap 📶 in the notch (or say "connect to my hotspot"). Pick it from the Wi-Fi networks this PC has joined before.'), wifi),
+    toggle('End-of-class nudge', '"5 min left of Maths · next: Hindi in B204" from your timetable', 'classNudge'),
+    toggle('Screenshot peek', 'After Win+Shift+S: Ask AI about it or save it', 'screenshotPeek'),
   );
 }
 
@@ -753,7 +842,7 @@ function render() {
   document.documentElement.style.setProperty('--accent', snap.config.accent);
   document.getElementById('version').textContent = `Settings · v${snap.version}`;
   const scroll = window.scrollY;
-  root.replaceChildren(guide(), notchSection(), homeSection(), appsSection(), dockSection(), appearance(), music(), calendarWeather(), schoolSection(), classSection(), focus(), notesAiSection(), extrasSection(), alerts(), wellbeingSection(), claudeSection(), general());
+  root.replaceChildren(guide(), notchSection(), homeSection(), appsSection(), dockSection(), appearance(), music(), calendarWeather(), schoolSection(), classSection(), focus(), notesAiSection(), extrasSection(), phoneSection(), alerts(), wellbeingSection(), claudeSection(), general());
   window.scrollTo(0, scroll);
 }
 

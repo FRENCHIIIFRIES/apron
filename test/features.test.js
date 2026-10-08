@@ -36,7 +36,7 @@ test('lockdown minimises matching non-browser windows and honours config', () =>
 test('notifications: payload text and app names', () => {
   const xml = '<toast><visual><binding template="ToastGeneric"><text>Aisha</text><text>are you coming? &amp; bring notes</text></binding></visual></toast>';
   assert.deepStrictEqual(parsePayload(xml), { title: 'Aisha', body: 'are you coming? & bring notes' });
-  assert.deepStrictEqual(appLabel('Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.instagram.android'), { name: 'Instagram', phone: true });
+  assert.deepStrictEqual(appLabel('Microsoft.YourPhone_8wekyb3d8bbwe!YourPhoneNotifications_com.instagram.android'), { name: 'Instagram', phone: true, pkg: 'com.instagram.android' });
   assert.strictEqual(appLabel('5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App').name, 'WhatsApp');
   assert.strictEqual(filetimeToMs('116444736000000000'), 0);
 });

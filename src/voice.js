@@ -1,4 +1,5 @@
-// Runs the offline "Hey Apron" voice helper while voice commands are switched on.
+// Tap-to-talk: runs the mic helper (src/voice/ApronVoice.cs) and hands each finished clip
+// to whoever is listening. The helper only opens the mic between start and the end of a clip.
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -10,22 +11,18 @@ function ensureBinary() {
   if (fs.existsSync(BINARY) && fs.statSync(BINARY).mtimeMs >= fs.statSync(SOURCE).mtimeMs) return BINARY;
   const fw = path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319');
   fs.mkdirSync(path.dirname(BINARY), { recursive: true });
-  execFileSync(
-    path.join(fw, 'csc.exe'),
-    ['/nologo', '/optimize', '/target:winexe', `/out:${BINARY}`, `/r:${path.join(fw, 'WPF', 'System.Speech.dll')}`, '/r:System.Core.dll', SOURCE],
-    { windowsHide: true, stdio: 'pipe' },
-  );
+  execFileSync(path.join(fw, 'csc.exe'), ['/nologo', '/optimize', '/target:winexe', `/out:${BINARY}`, SOURCE], { windowsHide: true, stdio: 'pipe' });
   return BINARY;
 }
 
 /**
- * onCommand({ cmd, minutes? }); onStatus({ status: 'listening' | 'off' | 'error', error? });
- * onHint({ wake: true } | { unsure: text } | { level: 0-100 })
- * logFile: where the helper's diagnostics go (what it matched and how sure it was; never audio).
+ * onState({ status: 'idle' | 'listening' | 'thinking' | 'error', error? });
+ * onLevel(0-100) while listening; onClip(base64Wav, ms) once you stop talking.
+ * logFile: short diagnostics (what happened, never audio).
  */
-function create(onCommand, onStatus, onHint = () => {}, { logFile } = {}) {
+function create({ onState, onLevel = () => {}, onClip, logFile } = {}) {
   let proc = null;
-  let wanted = false;
+  let status = 'idle';
 
   function log(text) {
     if (!logFile) return;
@@ -37,13 +34,18 @@ function create(onCommand, onStatus, onHint = () => {}, { logFile } = {}) {
     }
   }
 
+  function setStatus(s, extra = {}) {
+    status = s;
+    onState({ status: s, ...extra });
+  }
+
   function launch() {
     let binary;
     try {
       binary = ensureBinary();
-    } catch (err) {
-      onStatus({ status: 'error', error: 'could not build the voice helper' });
-      return;
+    } catch {
+      setStatus('error', { error: 'could not build the voice helper' });
+      return false;
     }
     let buf = '';
     proc = spawn(binary, [], { windowsHide: true });
@@ -55,42 +57,66 @@ function create(onCommand, onStatus, onHint = () => {}, { logFile } = {}) {
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
         if (!line) continue;
+        let msg;
         try {
-          const msg = JSON.parse(line);
-          if (msg.debug) log(msg.debug);
-          else if (msg.error) {
-            log(`error ${msg.error}`);
-            onStatus({ status: 'error', error: msg.error });
-          } else if (msg.ready) onStatus({ status: 'listening' });
-          else if (msg.cmd) {
-            log(`command ${msg.cmd}${msg.minutes ? ` ${msg.minutes}` : ''} ${msg.confidence}`);
-            onCommand(msg);
-          }
-          else if (msg.wake || msg.unsure || msg.level !== undefined) onHint(msg);
+          msg = JSON.parse(line);
         } catch {
-          // ignore
+          continue;
+        }
+        if (msg.debug) log(msg.debug);
+        else if (msg.level !== undefined) onLevel(msg.level);
+        else if (msg.listening) setStatus('listening');
+        else if (msg.speech) log('speech started');
+        else if (msg.clip) {
+          log(`clip ${msg.ms} ms`);
+          setStatus('thinking');
+          onClip(msg.clip, msg.ms);
+        } else if (msg.silent) {
+          log('no speech heard');
+          setStatus('idle', { heard: false });
+        } else if (msg.cancelled) setStatus('idle');
+        else if (msg.error) {
+          log(`error ${msg.error}`);
+          setStatus('error', { error: msg.error });
         }
       }
     });
     proc.on('exit', () => {
       proc = null;
-      if (wanted) setTimeout(() => wanted && !proc && launch(), 5000);
-      else onStatus({ status: 'off' });
+      if (status === 'listening') setStatus('idle');
     });
+    return true;
   }
 
   return {
-    setEnabled(on) {
-      wanted = Boolean(on);
-      if (wanted && !proc) launch();
-      if (!wanted && proc) {
-        proc.stdin.end();
-        setTimeout(() => proc && proc.kill(), 1000);
-      }
+    /** Starts listening, or (if already listening) finishes the clip now. */
+    toggle() {
+      if (status === 'listening') return this.finish();
+      if (status === 'thinking') return undefined;
+      if (!proc && !launch()) return undefined;
+      proc.stdin.write('start\n');
+      return undefined;
     },
+    finish() {
+      if (proc && status === 'listening') proc.stdin.write('stop\n');
+    },
+    cancel() {
+      if (proc && status === 'listening') proc.stdin.write('cancel\n');
+    },
+    /** Back to idle once the clip has been dealt with. */
+    done() {
+      if (status === 'thinking') setStatus('idle');
+    },
+    get status() {
+      return status;
+    },
+    /** Ends the helper (Apron is quitting). */
     stop() {
-      wanted = false;
-      if (proc) proc.kill();
+      if (proc) {
+        proc.stdin.end();
+        const p = proc;
+        setTimeout(() => p.kill(), 1000);
+      }
     },
   };
 }

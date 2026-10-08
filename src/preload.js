@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('island', {
   getState: () => ipcRenderer.invoke('island:state'),
@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('island', {
   onHover: (cb) => ipcRenderer.on('island:hover', (_e, inside) => cb(inside)),
   reportRect: (r) => ipcRenderer.send('island:rect', r),
   onToggle: (cb) => ipcRenderer.on('island:toggle', () => cb()),
+  onAnswer: (cb) => ipcRenderer.on('island:answer', () => cb()),
   media: (cmd) => ipcRenderer.send('island:media', cmd),
   open: (url) => ipcRenderer.send('island:open', url),
   openConfig: () => ipcRenderer.send('island:open-config'),
@@ -31,4 +32,12 @@ contextBridge.exposeInMainWorld('island', {
   todo: (op, arg) => ipcRenderer.send('island:todo', op, arg),
   timer: (op, arg) => ipcRenderer.send('island:timer', op, arg),
   clipboard: (op, arg) => ipcRenderer.send('island:clipboard', op, arg),
+  voice: (op) => ipcRenderer.send('island:voice', op === 'cancel' ? 'cancel' : 'toggle'),
+  micMute: () => ipcRenderer.send('island:mic'),
+  phone: (op, arg) => ipcRenderer.send('island:phone', String(op), arg == null ? null : String(arg)),
+  shelf: (op, arg) => ipcRenderer.send('island:shelf', String(op), arg),
+  /** Dropped File objects -> their paths on disk. */
+  shelfAdd: (files) => ipcRenderer.send('island:shelf', 'add', Array.from(files || []).map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
+  shelfDrag: (path) => ipcRenderer.send('island:shelf-drag', String(path)),
+  shot: (op) => ipcRenderer.send('island:shot', String(op)),
 });

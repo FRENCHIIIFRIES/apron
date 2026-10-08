@@ -1,6 +1,6 @@
 // Media bridge for the island, built with the .NET Framework csc that ships with Windows.
 // stdin:  one command per line: toggle | next | prev | volup | voldown | mute | vol <0-100>
-//         watch on|off | closetab <hwnd> | minimize <hwnd>   (focus lockdown)
+//         watch on|off | closetab <hwnd> | minimize <hwnd>   (focus lockdown) | micmute
 // stdout: the current media session + system volume as one JSON line, whenever it changes.
 using System;
 using System.Globalization;
@@ -8,6 +8,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Windows.Devices.Enumeration;
 using Windows.Foundation;
 using Windows.Media.Control;
 using Windows.Storage.Streams;
@@ -43,6 +44,7 @@ static class IslandMedia
         manager = Await(GlobalSystemMediaTransportControlsSessionManager.RequestAsync());
         new Thread(ReadCommands) { IsBackground = true }.Start();
         Privacy.Start();
+        Devices.Start();
 
         string last = null;
         while (true)
@@ -286,7 +288,7 @@ static class Volume
     }
 
     [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    interface IAudioEndpointVolume
+    public interface IAudioEndpointVolume
     {
         int RegisterControlChangeNotify(IntPtr notify);
         int UnregisterControlChangeNotify(IntPtr notify);
@@ -303,14 +305,15 @@ static class Volume
         int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
-    static Guid context = Guid.Empty;
+    public static Guid context = Guid.Empty;
 
     // Fetched each time so switching speakers/headphones just works.
-    static IAudioEndpointVolume Endpoint()
+    // flow 0 = speakers, 1 = microphone; role 0 = console, 1 = multimedia, 2 = communications.
+    public static IAudioEndpointVolume Endpoint(int flow = 0, int role = 1)
     {
         var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         IMMDevice device;
-        if (enumerator.GetDefaultAudioEndpoint(0 /* render */, 1 /* multimedia */, out device) != 0 || device == null) return null;
+        if (enumerator.GetDefaultAudioEndpoint(flow, role, out device) != 0 || device == null) return null;
         var iid = typeof(IAudioEndpointVolume).GUID;
         object o;
         if (device.Activate(ref iid, 23 /* CLSCTX_ALL */, IntPtr.Zero, out o) != 0) return null;
@@ -322,6 +325,19 @@ static class Volume
         float delta;
         if (cmd == "volup") delta = 0.04f;
         else if (cmd == "voldown") delta = -0.04f;
+        else if (cmd == "micmute")
+        {
+            // Mute (or unmute) the default mic, for calls and for Teams/Meet in class.
+            var mic = Endpoint(1, 0);
+            if (mic == null) return true;
+            bool muted;
+            mic.GetMute(out muted);
+            mic.SetMute(!muted, ref context);
+            var comms = Endpoint(1, 2);
+            if (comms != null) comms.SetMute(!muted, ref context);
+            Devices.ReportMic();
+            return true;
+        }
         else if (cmd == "mute")
         {
             var ep = Endpoint();
@@ -508,5 +524,112 @@ static class Privacy
             catch { }
             Thread.Sleep(1500);
         }
+    }
+}
+
+// Your phone's battery, over the Bluetooth hands-free link Phone Link uses for calls (phones
+// show up as "<name> Hands-Free HF"), and whether the mic is muted.
+static class Devices
+{
+    const string BatteryKey = "{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2";
+    const string HfSuffix = " Hands-Free HF";
+    const string IsConnected = "System.Devices.Aep.IsConnected";
+    static string aepId;
+    static string lastMic;
+    static readonly object micLock = new object();
+
+    public static void Start()
+    {
+        new Thread(PhoneLoop) { IsBackground = true }.Start();
+        new Thread(() => { while (true) { ReportMic(); Thread.Sleep(1500); } }) { IsBackground = true }.Start();
+    }
+
+    static T Wait<T>(IAsyncOperation<T> op, int seconds)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (op.Status == AsyncStatus.Started)
+        {
+            if (DateTime.UtcNow > deadline) { op.Cancel(); return default(T); }
+            Thread.Sleep(20);
+        }
+        return op.Status == AsyncStatus.Completed ? op.GetResults() : default(T);
+    }
+
+    public static void ReportMic()
+    {
+        try
+        {
+            var mic = Volume.Endpoint(1, 0);
+            bool muted = false;
+            if (mic != null) mic.GetMute(out muted);
+            var line = "{\"micmuted\":" + (mic == null ? "null" : muted ? "true" : "false") + "}";
+            lock (micLock)
+            {
+                if (line == lastMic) return;
+                lastMic = line;
+            }
+            IslandMedia.Emit(line);
+        }
+        catch { }
+    }
+
+    static void PhoneLoop()
+    {
+        string last = null;
+        while (true)
+        {
+            try
+            {
+                string name = null;
+                int battery = -1;
+                var devs = Wait(DeviceInformation.FindAllAsync("", new[] { BatteryKey }, DeviceInformationKind.Device), 30);
+                if (devs != null)
+                    foreach (var d in devs)
+                    {
+                        object b;
+                        if (d.Name == null || !d.Name.EndsWith(HfSuffix) || !d.Properties.TryGetValue(BatteryKey, out b) || b == null) continue;
+                        name = d.Name.Substring(0, d.Name.Length - HfSuffix.Length);
+                        battery = Convert.ToInt32(b);
+                        break;
+                    }
+                if (name == null)
+                {
+                    if (last != "none") IslandMedia.Emit("{\"phone\":null}");
+                    last = "none";
+                }
+                else
+                {
+                    var head = "{\"phone\":{\"name\":" + IslandMedia.Str(name) + ",\"battery\":" + battery + ",\"connected\":";
+                    // The battery is quick; whether it's connected takes a while the first time.
+                    if (aepId == null && last == null) IslandMedia.Emit(head + "null}}");
+                    var line = head + Connected(name) + "}}";
+                    if (line != last) { IslandMedia.Emit(line); last = line; }
+                }
+            }
+            catch { }
+            Thread.Sleep(60000);
+        }
+    }
+
+    // The battery value stays behind when the phone walks away, so say whether it's here.
+    static string Connected(string name)
+    {
+        try
+        {
+            if (aepId == null)
+            {
+                // Slow (Windows checks every paired Bluetooth device), so only done once.
+                var aeps = Wait(DeviceInformation.FindAllAsync(
+                    "System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\" AND System.Devices.Aep.IsPaired:=System.StructuredQueryType.Boolean#True",
+                    new[] { IsConnected }, DeviceInformationKind.AssociationEndpoint), 90);
+                if (aeps != null) foreach (var a in aeps) if (a.Name == name) { aepId = a.Id; break; }
+                if (aepId == null) return "null";
+            }
+            var info = Wait(DeviceInformation.CreateFromIdAsync(aepId, new[] { IsConnected }, DeviceInformationKind.AssociationEndpoint), 15);
+            object c;
+            if (info != null && info.Properties.TryGetValue(IsConnected, out c) && c is bool) return (bool)c ? "true" : "false";
+        }
+        catch { }
+        return "null";
     }
 }

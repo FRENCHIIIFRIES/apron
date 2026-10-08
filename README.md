@@ -13,7 +13,11 @@ A Nothing-style Dynamic Island for Windows. A black notch at the top of the scre
 - **Share the song** (a song.link page that opens in Spotify and everywhere else), **mic/camera dots** next to the notch like a phone, and an optional **sleep reminder**.
 - **Home screen.** Hover the notch and you get a grid of widgets (music, next class, weather, homework due, focus, to-dos, Claude Code, system) with an icon dock along the top. Pick and order the widgets in Settings.
 - **AI (Gemini by default, or Claude).** `?` questions, `??` questions about what's on your screen, translation (`tr …`, or automatically for copied Hindi), and a **homework planner** that fits focus blocks into your free time.
-- **Class mode** (quiet notifications + lockdown during school hours), **flashcards** from `question :: answer` lines in your Obsidian notes during Pomodoro breaks, a **daily summary**, a **System** view (CPU, RAM, battery time left, Wi-Fi), **Spotify** like/playlists (connect your own Spotify app), and offline **"Hey Apron" voice commands**.
+- **Class mode** (quiet notifications + lockdown during school hours), **flashcards** from `question :: answer` lines in your Obsidian notes during Pomodoro breaks, a **daily summary**, a **System** view (CPU, RAM, battery time left, Wi-Fi), and **Spotify** like/playlists (connect your own Spotify app).
+- **Talk to Apron.** Press Ctrl+Alt+V (or 🎙 in the notch) and say it however you like, in any accent: "25 minute timer", "skip this song", "what's my next class", "open Spotify", "what is osmosis". The mic is only on while you talk; Gemini turns the clip into the action.
+- **Phone (through Phone Link).** Your phone's battery, missed calls with Call back, texts and WhatsApps with Reply, speed dial and a one-tap hotspot.
+- **Shelf.** Drop files on the notch to keep them handy and drag them out into any app later. **Screenshots** (Win+Shift+S) peek in the notch with Ask AI and Save.
+- **Closed-notch priority list** (choose what wins when several things want the notch), **Ctrl+Alt+M** mic mute with a red dot by the notch, a **charging animation**, and an **end-of-class nudge** ("5 min left of Maths · next: Hindi").
 - **To-do list, clipboard history** (memory only; things that look like passwords are masked), battery notices, accent colours, one notch on every screen, and a full **Settings window** (click the tray icon).
 
 ## Install

@@ -48,7 +48,7 @@ const DEFAULTS = {
   aiKeyEnc: '', // Anthropic API key, encrypted with Windows' DPAPI (safeStorage)
   classMode: { enabled: false, start: '08:00', end: '15:30', days: [1, 2, 3, 4, 5], lockdown: true, quiet: true },
   dailySummary: { enabled: true, time: '21:30' },
-  voice: false, // "Hey Apron" voice commands (offline)
+  voice: true, // tap-to-talk (Ctrl+Alt+V or the mic button), understood by Gemini
   aiProvider: 'gemini', // 'gemini' or 'claude' for Ask, translation and the planner
   geminiKeyEnc: '', // Google AI Studio key, encrypted like aiKeyEnc
   geminiModel: '', // empty = ai.js default
@@ -60,7 +60,12 @@ const DEFAULTS = {
   homeWidgets: ['music', 'apps', 'next', 'weather', 'due', 'focus', 'todo', 'claude', 'system'],
   dockOrder: ['home', 'media', 'calendar', 'claude', 'timer', 'todo', 'clip', 'sys'],
   dockHidden: [],
-  notchShow: 'auto', // closed notch: 'auto', 'rotate', or one thing ('music', 'next', 'weather', 'clock', ...)
+  notchShow: 'auto', // closed notch: 'auto' (first thing on notchPriority that has something to show) or 'rotate'
+  notchPriority: ['music', 'class', 'soon', 'next', 'due', 'countdown', 'rain', 'phone', 'weather', 'todo', 'prs', 'system', 'clock'],
+  speedDial: [], // [{ name, number }] called through Phone Link
+  hotspot: '', // saved Wi-Fi name of your phone's hotspot
+  classNudge: true, // "5 min left of Maths, next: Hindi"
+  screenshotPeek: true, // new screenshot on the clipboard: save it or ask AI about it
   pinnedApps: [], // [{ name, path }] from the Start menu / Desktop
 };
 
@@ -80,6 +85,14 @@ function loadConfig() {
   if (!HEX.test(config.accent)) config.accent = DEFAULTS.accent;
   config.accent = config.accent.toLowerCase();
   config.artColor = config.artColor === true;
+  // Older versions kept one thing in the notch ("notchShow": "music"); that becomes the top
+  // of the priority list now.
+  if (!['auto', 'rotate'].includes(config.notchShow)) {
+    const first = config.notchShow === 'next' ? ['class', 'soon', 'next'] : [config.notchShow];
+    const order = Array.isArray(config.notchPriority) ? config.notchPriority : DEFAULTS.notchPriority;
+    config.notchPriority = [...first.filter((x) => DEFAULTS.notchPriority.includes(x)), ...order.filter((x) => !first.includes(x))];
+    config.notchShow = 'auto';
+  }
   return config;
 }
 
