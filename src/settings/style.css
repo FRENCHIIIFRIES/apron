@@ -236,3 +236,5 @@ section h2::before { content: "● "; color: var(--accent); }
 .wl-name small { color: var(--muted); font-weight: 400; }
 select.text { appearance: none; cursor: pointer; max-width: 220px; }
 select.text option { background: #000; color: #fff; }
+
+.titlebar .mark { flex: none; margin-right: 8px; filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.25)); }

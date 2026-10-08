@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo.svg" alt="Apron" width="560"></p>
+
 # Apron
 
 A Nothing-style Dynamic Island for Windows. A black notch at the top of the screen that shows what matters right now and opens on hover.
