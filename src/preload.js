@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('island', {
   reportRect: (r) => ipcRenderer.send('island:rect', r),
   onToggle: (cb) => ipcRenderer.on('island:toggle', () => cb()),
   onAnswer: (cb) => ipcRenderer.on('island:answer', () => cb()),
+  onEscape: (cb) => ipcRenderer.on('island:escape', () => cb()),
+  launcherOpen: (open) => ipcRenderer.send('island:launcher-open', Boolean(open)),
   media: (cmd) => ipcRenderer.send('island:media', cmd),
   open: (url) => ipcRenderer.send('island:open', url),
   openConfig: () => ipcRenderer.send('island:open-config'),

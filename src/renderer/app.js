@@ -1719,7 +1719,7 @@ function renderLaunchResults() {
       h(
         'div',
         { class: `answer${a.status === 'error' ? ' err' : ''}` },
-        h('div', { class: 'answer-q' }, `✦ ${a.question}`),
+        h('div', { class: 'answer-q' }, h('span', {}, `✦ ${a.question}`), h('button', { class: 'answer-close', title: 'Close (Esc)', onclick: () => closeLauncher() }, '×')),
         h('div', { class: 'answer-text' }, a.text || (a.status === 'streaming' ? 'Thinking…' : '')),
         a.status === 'streaming' ? h('div', { class: 'answer-meta' }, `${a.who || 'AI'} is answering · Esc to stop`) : h('div', { class: 'answer-meta' }, `${a.who ? `${a.who} · ` : ''}Enter a new question, or Esc to close`),
       ),
@@ -1791,6 +1791,8 @@ function openLauncher() {
   launchItems = [];
   renderLaunchResults(); // shows your pinned apps until you type
   setTimeout(() => launchInput.focus(), 30);
+  // Esc works even when Windows didn't give us the keyboard (main holds it while open).
+  window.island.launcherOpen(true);
 }
 
 /** Shows the latest answer (asked out loud) in the launcher. */
@@ -1799,10 +1801,21 @@ function openAnswer() {
   state.askOpen = true;
   launchInput.value = '? ';
   renderLaunchResults();
+  // A spoken question: you're usually in another app, so it tidies itself away once you
+  // have read it (mouse in and out of the notch), or after a while if you never look.
+  answerByVoice = { hovered: false };
+  clearTimeout(answerTimer);
+  answerTimer = setTimeout(() => answerByVoice && !answerByVoice.hovered && closeLauncher(), 45e3);
 }
+
+let answerByVoice = null;
+let answerTimer = null;
 
 function closeLauncher() {
   if (!state.launching) return;
+  answerByVoice = null;
+  clearTimeout(answerTimer);
+  window.island.launcherOpen(false);
   state.launching = false;
   islandEl.classList.remove('launching');
   if (state.ask && state.ask.status === 'streaming') window.island.askCancel();
@@ -2159,9 +2172,15 @@ if (pinned) {
 let collapseTimer = null;
 window.island.onHover((inside) => {
   clearTimeout(collapseTimer);
+  if (answerByVoice) {
+    if (inside) answerByVoice.hovered = true;
+    else if (answerByVoice.hovered) collapseTimer = setTimeout(closeLauncher, 400);
+  }
   if (inside) expand();
   else if (!pinned && !state.held && !typing && !state.launching) collapseTimer = setTimeout(collapse, 300);
 });
+
+window.island.onEscape(() => closeLauncher());
 
 window.island.onToggle(() => {
   if (state.launching) closeLauncher();

@@ -161,6 +161,24 @@ function music() {
   return section('Music', toggle('Lyrics', 'Synced lyrics from LRCLIB under the song', 'lyrics'), toggle('Song-change peek', 'The notch widens for a moment on a new track', 'peek'));
 }
 
+/** A pasted feed link, tidied: webcal:// becomes https://. Empty if it isn't a link. */
+function cleanFeed(raw) {
+  const v = String(raw || '').trim().replace(/^webcal:\/\//i, 'https://');
+  try {
+    return new URL(v).protocol === 'https:' ? v : '';
+  } catch {
+    return '';
+  }
+}
+
+/** "✓ Working · 10 events…" / "⚠ Couldn't load…" for a calendar feed. */
+function feedLine(st, urls, what) {
+  if (!urls || !urls.length) return 'None added yet';
+  if (!st || st.status === 'loading') return 'Loading…';
+  if (st.status === 'error') return `⚠ Couldn't load (${st.error || 'check the link'})`;
+  return `✓ Working · ${st.count} ${what}`;
+}
+
 function calendarWeather() {
   const c = snap.config;
   const mask = (u) => {
@@ -177,12 +195,13 @@ function calendarWeather() {
   cityInput.addEventListener('keydown', (e) => e.key === 'Enter' && saveCity());
   cityInput.addEventListener('blur', saveCity);
 
-  const linkInput = h('input', { class: 'text', placeholder: 'Paste a Google Calendar iCal link (https://…/basic.ics)' });
-  const addLink = () => {
-    const v = linkInput.value.trim();
-    if (!v) return;
-    if (!/^https:\/\//.test(v)) return toast('That needs to be an https:// link');
-    set({ icalUrls: [...(c.icalUrls || []), v] }, 'Calendar added');
+  const linkInput = h('input', { class: 'text', placeholder: 'Paste a Google Calendar iCal link (https://… or webcal://…)' });
+  const addLink = async () => {
+    const v = cleanFeed(linkInput.value);
+    if (!v) return toast(linkInput.value.trim() ? "That isn't a calendar link. Copy the iCal address from Google Calendar's settings." : 'Paste your calendar link first');
+    if ((c.icalUrls || []).includes(v)) return toast('That calendar is already added');
+    await set({ icalUrls: [...(c.icalUrls || []), v] });
+    toast(snap.config.icalUrls.includes(v) ? 'Calendar saved' : "Couldn't save that link");
   };
   linkInput.addEventListener('keydown', (e) => e.key === 'Enter' && addLink());
 
@@ -191,7 +210,7 @@ function calendarWeather() {
     h(
       'div',
       { class: 'item stack' },
-      label('Calendars', 'Google Calendar → Settings → your calendar → Secret address in iCal format'),
+      label('Calendars', `${feedLine(snap.calendarStatus, c.icalUrls, 'events today & tomorrow')} · Google Calendar → Settings → your calendar → Secret address in iCal format`),
       (c.icalUrls || []).length
         ? h(
             'div',
@@ -279,12 +298,13 @@ function schoolSection() {
       return u.slice(0, 30);
     }
   };
-  const hwInput = h('input', { class: 'text', placeholder: 'ManageBac / Classroom calendar link (https://…)' });
-  const addHw = () => {
-    let v = hwInput.value.trim().replace(/^webcal:\/\//i, 'https://');
-    if (!v) return;
-    if (!/^https:\/\//.test(v)) return toast('That needs to be an https:// or webcal:// link');
-    set({ homeworkUrls: [...(c.homeworkUrls || []), v] }, 'Homework feed added');
+  const hwInput = h('input', { class: 'text', placeholder: 'ManageBac / Classroom calendar link (https://… or webcal://…)' });
+  const addHw = async () => {
+    const v = cleanFeed(hwInput.value);
+    if (!v) return toast(hwInput.value.trim() ? "That isn't a calendar link" : 'Paste your ManageBac link first');
+    if ((c.homeworkUrls || []).includes(v)) return toast('That feed is already added');
+    await set({ homeworkUrls: [...(c.homeworkUrls || []), v] });
+    toast(snap.config.homeworkUrls.includes(v) ? 'Homework feed saved' : "Couldn't save that link");
   };
   hwInput.addEventListener('keydown', (e) => e.key === 'Enter' && addHw());
 
@@ -300,7 +320,7 @@ function schoolSection() {
     h(
       'div',
       { class: 'item stack' },
-      label('Homework due dates', 'ManageBac: Calendar → Subscribe → copy the link (don\'t add it to Google) and paste it here. Classroom: its Google Calendar → Settings → Secret address.'),
+      label('Homework due dates', `${feedLine(snap.homeworkStatus, c.homeworkUrls, 'due in the next 2 weeks')} · ManageBac: Calendar → Subscribe → copy the link (don't add it to Google) and paste it here. Classroom: its Google Calendar → Settings → Secret address.`),
       (c.homeworkUrls || []).length
         ? h('div', { class: 'chips' }, ...c.homeworkUrls.map((u) => h('span', { class: 'chip' }, mask(u), h('button', { class: 'x', title: 'Remove', onclick: () => set({ homeworkUrls: c.homeworkUrls.filter((x) => x !== u) }) }, '×'))))
         : null,

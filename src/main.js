@@ -249,8 +249,19 @@ function trackHover() {
 // ---------- sources ----------
 
 function startSources() {
-  sources.calendar = calendar.start(config, (v) => update('calendar', v));
-  sources.homework = calendar.start(config, (v) => update('homework', v), { urls: config.homeworkUrls || [], days: 14 });
+  // Settings shows whether each feed is working, so it hears about every refresh too.
+  sources.calendar = calendar.start(config, (v) => {
+    update('calendar', v);
+    sendSettings();
+  });
+  sources.homework = calendar.start(
+    config,
+    (v) => {
+      update('homework', v);
+      sendSettings();
+    },
+    { urls: config.homeworkUrls || [], days: 14 },
+  );
   sources.github = github.start(config, (v) => update('github', v));
   sources.weather = weather.start(config, (v) => update('weather', v));
 }
@@ -909,7 +920,7 @@ function applyConfig(next) {
   config = next;
   applied = JSON.parse(JSON.stringify(next));
   const changed = (...keys) => keys.some((k) => JSON.stringify(prev[k]) !== JSON.stringify(next[k]));
-  if (changed('icalUrls', 'calendarRefreshMinutes', 'githubRefreshSeconds', 'weatherCity', 'units')) {
+  if (changed('icalUrls', 'homeworkUrls', 'calendarRefreshMinutes', 'githubRefreshSeconds', 'weatherCity', 'units')) {
     stopSources();
     startSources();
   }
@@ -1008,6 +1019,8 @@ function settingsSnapshot() {
     voiceShortcut,
     micShortcut,
     phone: state.phone,
+    calendarStatus: feedStatus(state.calendar),
+    homeworkStatus: feedStatus(state.homework),
     notesTarget: notes.target(config).label,
     version: app.getVersion(),
     configPath: CONFIG_PATH,
@@ -1015,6 +1028,12 @@ function settingsSnapshot() {
     hooksInstalled: hooksInstall.status(),
     update: state.update,
   };
+}
+
+/** For Settings: is a calendar feed working, and how much did it find? */
+function feedStatus(v) {
+  if (!v) return { status: 'loading' };
+  return { status: v.status, error: v.error || null, count: (v.events || []).length, updatedAt: v.updatedAt || null };
 }
 
 function sendSettings() {
@@ -1054,10 +1073,15 @@ function openSettings() {
       setTimeout(async () => {
         // APRON_SETTINGS_FIND=<section title> scrolls to that section first.
         const find = process.env.APRON_SETTINGS_FIND;
-        if (find) await settingsWin.webContents.executeJavaScript(`[...document.querySelectorAll('h2')].find((x) => x.textContent.includes(${JSON.stringify(find)}))?.scrollIntoView()`);
+        const scroll = `[...document.querySelectorAll('h2')].find((x) => x.textContent.includes(${JSON.stringify(find || '')}))?.scrollIntoView()`;
+        if (find) {
+          await settingsWin.webContents.executeJavaScript(scroll);
+          await new Promise((r) => setTimeout(r, 1500)); // let late re-renders settle
+          await settingsWin.webContents.executeJavaScript(scroll);
+        }
         const img = await settingsWin.webContents.capturePage();
         fs.writeFileSync(process.env.APRON_SETTINGS_SHOT, img.toPNG());
-      }, 1500);
+      }, Number(process.env.APRON_SETTINGS_DELAY) || 1500);
     }
   });
   settingsWin.on('closed', () => {
@@ -1256,6 +1280,19 @@ ipcMain.on('island:open-launcher', (e) => {
   for (const [id, n] of notches) if (!n.win.isDestroyed() && n.win.webContents === e.sender) openLauncherOn(id);
 });
 ipcMain.on('island:ask-cancel', () => sources.ask && sources.ask.cancel());
+// While a launcher or answer is open, Esc closes it from anywhere: an answer to a spoken
+// question opens while you're in another app, and Windows won't hand us the keyboard then.
+const launcherOpen = new Set();
+ipcMain.on('island:launcher-open', (e, open) => {
+  if (open) launcherOpen.add(e.sender);
+  else launcherOpen.delete(e.sender);
+  for (const wc of launcherOpen) if (wc.isDestroyed()) launcherOpen.delete(wc);
+  if (launcherOpen.size && !globalShortcut.isRegistered('Escape')) {
+    globalShortcut.register('Escape', () => {
+      for (const wc of launcherOpen) if (!wc.isDestroyed()) wc.send('island:escape');
+    });
+  } else if (!launcherOpen.size && globalShortcut.isRegistered('Escape')) globalShortcut.unregister('Escape');
+});
 ipcMain.handle('island:share', async () => {
   const m = state.media;
   if (!m || !m.title) return { ok: false };
@@ -1494,7 +1531,7 @@ app.whenReady().then(() => {
 });
 
 /**
- * APRON_DEMO=shot|charge|missed|message|classend|mic|shelf plays that peek with made-up data a few
+ * APRON_DEMO=shot|charge|missed|message|classend|mic|shelf|answer plays that peek with made-up data a few
  * seconds after start, so each one can be checked without a real call, screenshot or charger.
  */
 function runDemo(kind) {
@@ -1513,6 +1550,10 @@ function runDemo(kind) {
   } else if (kind === 'classend') emit({ type: 'classend', title: 'P3 Maths', left: 5, next: { title: 'P4 Hindi', location: 'B204', start: now + 6 * 60e3 } });
   else if (kind === 'mic') emit({ type: 'mic', muted: true });
   else if (kind === 'shelf') stores.shelf.add(['README.md', 'assets/logo.png', 'assets/logo.svg'].map((f) => path.join(__dirname, '..', f)));
+  else if (kind === 'answer') {
+    update('ask', { id: now, question: 'what is osmosis', status: 'done', text: 'Osmosis is water moving through a membrane from a weaker solution to a stronger one.', who: 'Gemini' });
+    showAnswer();
+  }
 }
 
 app.on('will-quit', () => globalShortcut.unregisterAll());
