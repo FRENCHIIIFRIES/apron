@@ -320,7 +320,7 @@ function schoolSection() {
     h(
       'div',
       { class: 'item stack' },
-      label('Homework due dates', `${feedLine(snap.homeworkStatus, c.homeworkUrls, 'due in the next 2 weeks')} · ManageBac: Calendar → Subscribe → copy the link (don't add it to Google) and paste it here. Classroom: its Google Calendar → Settings → Secret address.`),
+      label('Homework due dates', `${feedLine(snap.homeworkStatus, c.homeworkUrls, 'due in the next 30 days')} · ManageBac: Calendar → Subscribe → copy the link (don't add it to Google) and paste it here. Classroom: its Google Calendar → Settings → Secret address.`),
       (c.homeworkUrls || []).length
         ? h('div', { class: 'chips' }, ...c.homeworkUrls.map((u) => h('span', { class: 'chip' }, mask(u), h('button', { class: 'x', title: 'Remove', onclick: () => set({ homeworkUrls: c.homeworkUrls.filter((x) => x !== u) }) }, '×'))))
         : null,

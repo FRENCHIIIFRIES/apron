@@ -42,4 +42,5 @@ contextBridge.exposeInMainWorld('island', {
   shelfAdd: (files) => ipcRenderer.send('island:shelf', 'add', Array.from(files || []).map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   shelfDrag: (path) => ipcRenderer.send('island:shelf-drag', String(path)),
   shot: (op) => ipcRenderer.send('island:shot', String(op)),
+  feed: (op) => ipcRenderer.send('island:feed', String(op)),
 });

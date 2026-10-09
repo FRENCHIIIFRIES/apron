@@ -677,20 +677,37 @@ islandEl.addEventListener(
 
 let scrollCalendar = true;
 
+/** A calendar link you just copied: add it to Apron or to Google Calendar in one click. */
+function feedCard() {
+  const f = state.copiedFeed;
+  if (!f) return null;
+  return h(
+    'div',
+    { class: 'feed-card' },
+    h('span', { class: 'app-badge' }, '▦'),
+    h('div', { class: 'main' }, h('div', { class: 'title' }, `${f.source} calendar link`), h('div', { class: 'sub' }, f.kind === 'homework' ? 'Homework due dates' : 'Classes and events')),
+    f.known ? h('span', { class: 'side' }, '✓ in Apron') : h('button', { class: 'pill-btn', onclick: () => window.island.feed('apron') }, 'Add to Apron'),
+    h('button', { class: 'pill-btn ghost', title: "Opens Google Calendar's own Add-calendar prompt", onclick: () => window.island.feed('google') }, 'Google Calendar ↗'),
+    h('button', { class: 'x', title: 'Dismiss', onclick: () => window.island.feed('dismiss') }, '×'),
+  );
+}
+
 function renderCalendar() {
   const c = state.calendar;
   const root = $('#calendar');
+  const card = feedCard();
   if (!c) {
-    fill(root, h('div', { class: 'empty' }, 'Loading calendar…'));
+    fill(root, card, h('div', { class: 'empty' }, 'Loading calendar…'));
     return;
   }
   if (c.status === 'unconfigured') {
     fill(root,
+      card,
       h(
         'div',
         { class: 'empty' },
-        'Paste your Google Calendar secret iCal address into config.json',
-        h('button', { class: 'pill-btn', onclick: () => window.island.openConfig() }, 'Open config'),
+        "Copy your Google Calendar's secret iCal link and Apron will offer to add it (or add it in Settings).",
+        h('button', { class: 'pill-btn', onclick: () => window.island.openSettings() }, 'Open Settings'),
       ),
     );
     return;
@@ -815,7 +832,7 @@ function renderCalendar() {
   }
   if (earlier) items.push(h('div', { class: 'empty small' }, `${earlier} earlier today already done`));
   if (!c.events.length) items.push(h('div', { class: 'empty' }, 'Nothing today or tomorrow 🎉'));
-  fill(root, ...items);
+  fill(root, card, ...items);
   // On open, jump past the classes that already happened.
   if (scrollCalendar) {
     scrollCalendar = false;
@@ -1709,7 +1726,7 @@ const launchResults = $('#launch-results');
 let launchItems = [];
 let launchSel = 0;
 let searchSeq = 0;
-const KIND_GLYPH = { askshot: '▣', askscreen: '◩', translate: '文', cards: '▤', addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
+const KIND_GLYPH = { gsub: '▦', askshot: '▣', askscreen: '◩', translate: '文', cards: '▤', addfeed: '✎', open: '↗', url: '🌐', search: '⌕', ask: '✦', note: '✎', todo: '☐', hint: '…' };
 
 function renderLaunchResults() {
   const a = state.ask;
@@ -1954,6 +1971,22 @@ function onEvent(e) {
           trail: '',
         },
         6000,
+      );
+    }
+  } else if (e.type === 'feedcopied') {
+    const f = state.copiedFeed;
+    if (f) {
+      flash(
+        {
+          id: `feed:${e.at}`,
+          peek: true,
+          tab: 'calendar',
+          lead: h('span', { class: 'app-badge' }, '▦'),
+          text: h('span', { class: 'two' }, h('b', {}, `${f.source} link copied`), h('small', {}, f.known ? 'Already in Apron · hover to add it to Google' : 'Hover to add it to Apron or Google Calendar')),
+          textKey: `feed:${e.at}`,
+          trail: '',
+        },
+        9000,
       );
     }
   } else if (e.type === 'charging') {

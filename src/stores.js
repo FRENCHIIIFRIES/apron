@@ -183,7 +183,8 @@ function clipboardWatcher(clipboard, onChange, onCopied) {
       const secret = looksSecret(text.trim());
       history = [{ text, secret, at: Date.now() }, ...history.filter((h) => h.text !== text)].slice(0, 10);
       onChange(history);
-      onCopied({ text: secret ? '' : text.trim().slice(0, 120), secret, full: secret ? '' : text.trim() });
+      // raw is for recognising things like calendar links; it is never shown.
+      onCopied({ text: secret ? '' : text.trim().slice(0, 120), secret, full: secret ? '' : text.trim(), raw: text.trim() });
     } catch {
       // clipboard busy: try again next tick
     } finally {

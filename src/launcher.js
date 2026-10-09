@@ -3,6 +3,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { feedLink } = require('./calendar');
 
 const PREFIXES = [
   { re: /^(shot|screenshot)\s+/i, kind: 'askshot', hint: 'Ask AI about the screenshot' },
@@ -92,11 +93,12 @@ const looksLikeUrl = (s) => /^https?:\/\//i.test(s) || /^[\w-]+(\.[\w-]+)+(\/\S*
 function search(index, input) {
   const raw = String(input || '').trim();
   if (!raw) return [];
-  // A pasted ManageBac / Classroom calendar link: offer to add it as a homework feed.
-  if (/^webcal:\/\//i.test(raw) || (/^https:\/\//i.test(raw) && /(\.ics\b|managebac|\/ical\/|calendar)/i.test(raw))) {
+  // A pasted calendar link (ManageBac, Google iCal, .ics): add it to Apron or to Google Calendar.
+  const feed = feedLink(raw);
+  if (feed) {
     return [
-      { kind: 'addfeed', title: 'Add as homework feed', hint: 'Due dates', url: raw },
-      { kind: 'url', title: raw, hint: 'Open website', url: raw.replace(/^webcal:/i, 'https:') },
+      { kind: 'addfeed', title: feed.kind === 'homework' ? `Add ${feed.source} to Apron` : `Add ${feed.source} to Apron's calendar`, hint: feed.kind === 'homework' ? 'Due dates' : 'Calendar', url: raw },
+      { kind: 'gsub', title: 'Add to Google Calendar', hint: 'Subscribe', url: raw },
     ];
   }
   for (const p of PREFIXES) {

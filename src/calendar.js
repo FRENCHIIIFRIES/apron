@@ -88,4 +88,35 @@ function start(config, onUpdate, opts = {}) {
   };
 }
 
-module.exports = { start, parseEvents, dayRange };
+/**
+ * A calendar subscription link (webcal://, a .ics file, Google's iCal address, a ManageBac
+ * feed), as { url (https), kind: 'homework' | 'calendar', source }; null for anything else.
+ */
+function feedLink(text) {
+  const raw = String(text || '').trim();
+  if (!raw || /\s/.test(raw) || raw.length > 600) return null;
+  let u;
+  try {
+    u = new URL(raw.replace(/^webcal:\/\//i, 'https://'));
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:') return null;
+  const managebac = /(^|\.)managebac\.com$/i.test(u.hostname);
+  const google = /^calendar\.google\.com$/i.test(u.hostname) && /\/calendar\/ical\//.test(u.pathname);
+  if (!/^webcal:/i.test(raw) && !/\.ics$/i.test(u.pathname) && !google && !(managebac && /\/events\//.test(u.pathname))) return null;
+  // Classroom feeds are Google calendars named "classroom…".
+  const classroom = google && /classroom/i.test(decodeURIComponent(u.pathname));
+  return {
+    url: u.href,
+    kind: managebac || classroom ? 'homework' : 'calendar',
+    source: managebac ? 'ManageBac' : classroom ? 'Google Classroom' : google ? 'Google Calendar' : u.hostname.replace(/^www\./, ''),
+  };
+}
+
+/** Google Calendar's own "Add this calendar?" prompt for a feed. */
+function googleSubscribeUrl(url) {
+  return `https://calendar.google.com/calendar/r?cid=${encodeURIComponent(String(url).replace(/^https:\/\//i, 'webcal://'))}`;
+}
+
+module.exports = { start, parseEvents, dayRange, feedLink, googleSubscribeUrl };

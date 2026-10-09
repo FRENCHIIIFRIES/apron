@@ -96,6 +96,7 @@ const state = {
   inbox: { messages: [], calls: [] }, // recent phone messages and missed calls
   shelf: [], // files dropped on the notch
   shot: null, // latest screenshot on the clipboard { thumb, width, height, at }
+  copiedFeed: null, // a calendar link you just copied { kind, source, known, at } (the link itself stays in main)
   flashcards: { count: 0 },
   apps: [], // pinned quick-access apps, with icons
   ask: null, // the latest "Ask Claude" answer
@@ -260,7 +261,7 @@ function startSources() {
       update('homework', v);
       sendSettings();
     },
-    { urls: config.homeworkUrls || [], days: 14 },
+    { urls: config.homeworkUrls || [], days: 30 },
   );
   sources.github = github.start(config, (v) => update('github', v));
   sources.weather = weather.start(config, (v) => update('weather', v));
@@ -606,6 +607,30 @@ function checkClassEnd() {
   });
 }
 
+// ---------- calendar links (copy one anywhere and Apron offers to add it) ----------
+
+let copiedFeedUrl = null; // kept here, never sent to the notch
+
+const feedKey = (kind) => (kind === 'homework' ? 'homeworkUrls' : 'icalUrls');
+const hasFeed = (feed) => (config[feedKey(feed.kind)] || []).includes(feed.url);
+
+/** Adds a feed from calendar.feedLink() to Apron (homework or calendar). */
+function addFeed(feed) {
+  const key = feedKey(feed.kind);
+  if (hasFeed(feed)) return emit({ type: 'info', text: `${feed.source} is already in Apron`, trail: '✓' });
+  const clean = sanitize({ [key]: [...(config[key] || []), feed.url] });
+  if (!clean[key] || !clean[key].includes(feed.url)) return emit({ type: 'info', text: "Couldn't add that calendar", trail: '!' });
+  setConfig(clean);
+  if (state.copiedFeed) update('copiedFeed', { ...state.copiedFeed, known: true });
+  return emit({ type: 'info', text: feed.kind === 'homework' ? `${feed.source} added · due dates show in a moment` : `${feed.source} added to your calendar`, trail: '✓' });
+}
+
+function onCopiedFeed(feed) {
+  copiedFeedUrl = feed.url;
+  update('copiedFeed', { kind: feed.kind, source: feed.source, known: hasFeed(feed), at: Date.now() });
+  emit({ type: 'feedcopied' });
+}
+
 // ---------- shelf ----------
 
 const shelfIcons = new Map();
@@ -883,12 +908,14 @@ async function runLauncher(item) {
       break;
     }
     case 'addfeed': {
-      const url = String(item.url || '').replace(/^webcal:\/\//i, 'https://');
-      const clean = sanitize({ homeworkUrls: [...(config.homeworkUrls || []), url] });
-      if (clean.homeworkUrls && clean.homeworkUrls.includes(url)) {
-        setConfig(clean);
-        emit({ type: 'info', text: 'Homework feed added', trail: '✎' });
-      } else emit({ type: 'info', text: "That link didn't look like a calendar feed", trail: '!' });
+      const feed = calendar.feedLink(item.url);
+      if (feed) addFeed(feed);
+      else emit({ type: 'info', text: "That link didn't look like a calendar feed", trail: '!' });
+      break;
+    }
+    case 'gsub': {
+      const feed = calendar.feedLink(item.url);
+      if (feed) shell.openExternal(calendar.googleSubscribeUrl(feed.url));
       break;
     }
     case 'todo':
@@ -1224,6 +1251,16 @@ ipcMain.on('island:shelf-drag', (e, file) => {
   if (!stores.shelf || !stores.shelf.has(p)) return;
   e.sender.startDrag({ file: p, icon: shelfIcons.get(p) || nativeImage.createFromBuffer(appIconPng(32)) });
 });
+ipcMain.on('island:feed', (_e, op) => {
+  const feed = copiedFeedUrl && calendar.feedLink(copiedFeedUrl);
+  if (op === 'dismiss' || !feed) {
+    copiedFeedUrl = null;
+    return update('copiedFeed', null);
+  }
+  if (op === 'apron') return addFeed(feed);
+  if (op === 'google') return shell.openExternal(calendar.googleSubscribeUrl(feed.url));
+  return undefined;
+});
 ipcMain.on('island:shot', (_e, op) => {
   if (op === 'save') saveScreenshot();
   else if (op === 'dismiss') {
@@ -1504,6 +1541,8 @@ app.whenReady().then(() => {
     clipboard,
     (v) => update('clipboard', v),
     async (c) => {
+      const feed = calendar.feedLink(c.raw);
+      if (feed) return onCopiedFeed(feed);
       if (config.clipboard !== false) emit({ type: 'copied', text: c.text, secret: c.secret });
       // Translate copied text that isn't English (or isn't your target language).
       if (config.translateCopies && !c.secret && c.full && c.full.length <= 1000 && translator.detect(c.full) !== 'en') {
@@ -1531,7 +1570,7 @@ app.whenReady().then(() => {
 });
 
 /**
- * APRON_DEMO=shot|charge|missed|message|classend|mic|shelf|answer plays that peek with made-up data a few
+ * APRON_DEMO=shot|charge|missed|message|classend|mic|shelf|answer|feed plays that peek with made-up data a few
  * seconds after start, so each one can be checked without a real call, screenshot or charger.
  */
 function runDemo(kind) {
@@ -1550,6 +1589,7 @@ function runDemo(kind) {
   } else if (kind === 'classend') emit({ type: 'classend', title: 'P3 Maths', left: 5, next: { title: 'P4 Hindi', location: 'B204', start: now + 6 * 60e3 } });
   else if (kind === 'mic') emit({ type: 'mic', muted: true });
   else if (kind === 'shelf') stores.shelf.add(['README.md', 'assets/logo.png', 'assets/logo.svg'].map((f) => path.join(__dirname, '..', f)));
+  else if (kind === 'feed') onCopiedFeed(calendar.feedLink('webcal://school.managebac.com/student/events/token/demo.ics'));
   else if (kind === 'answer') {
     update('ask', { id: now, question: 'what is osmosis', status: 'done', text: 'Osmosis is water moving through a membrane from a weaker solution to a stronger one.', who: 'Gemini' });
     showAnswer();

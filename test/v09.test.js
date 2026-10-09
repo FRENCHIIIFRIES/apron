@@ -118,6 +118,26 @@ test('screenshots: a new image on the clipboard peeks once; text and old images 
   }
 });
 
+test('calendar links: recognised when copied or pasted, and sent to the right place', () => {
+  const { feedLink, googleSubscribeUrl } = require('../src/calendar');
+  const mb = feedLink('webcal://school.managebac.com/student/events/token/0000-aaaa.ics');
+  assert.deepStrictEqual(mb, { url: 'https://school.managebac.com/student/events/token/0000-aaaa.ics', kind: 'homework', source: 'ManageBac' });
+  const g = feedLink('https://calendar.google.com/calendar/ical/someone%40example.org/private-abc/basic.ics');
+  assert.deepStrictEqual([g.kind, g.source], ['calendar', 'Google Calendar']);
+  const cls = feedLink('https://calendar.google.com/calendar/ical/classroom123%40group.calendar.google.com/private-x/basic.ics');
+  assert.deepStrictEqual([cls.kind, cls.source], ['homework', 'Google Classroom']);
+  assert.strictEqual(feedLink('https://example.org/term.ics').source, 'example.org');
+  // not calendar links
+  for (const t of ['https://www.youtube.com/watch?v=1', 'https://calendar.google.com/calendar/u/0/r', 'hello world', 'http://example.org/a.ics', '']) assert.strictEqual(feedLink(t), null, t);
+  // Google's own "Add this calendar?" prompt
+  assert.strictEqual(googleSubscribeUrl(mb.url), 'https://calendar.google.com/calendar/r?cid=webcal%3A%2F%2Fschool.managebac.com%2Fstudent%2Fevents%2Ftoken%2F0000-aaaa.ics');
+
+  const launcher = require('../src/launcher');
+  const res = launcher.search([], 'webcal://school.managebac.com/student/events/token/0000-aaaa.ics');
+  assert.deepStrictEqual(res.map((r) => r.kind), ['addfeed', 'gsub']);
+  assert.match(res[0].title, /ManageBac/);
+});
+
 test('settings: notch priority, speed dial and hotspot are validated', () => {
   const { sanitize } = require('../src/settingsSchema');
   assert.deepStrictEqual(sanitize({ notchPriority: ['phone', 'music', 'hack', 'music'] }).notchPriority, ['phone', 'music']);
