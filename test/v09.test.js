@@ -31,6 +31,11 @@ test('phone: numbers, reply targets, missed calls and messages', () => {
   assert.deepStrictEqual(phone.replyTarget({ app: 'WhatsApp' }), { url: 'https://web.whatsapp.com/' });
   assert.deepStrictEqual(phone.replyTarget({ app: 'Zomato' }), { url: 'ms-phone:' });
 
+  // Phone Link puts the caller in the title or in the body.
+  assert.strictEqual(phone.caller({ title: 'Missed call', body: 'Mom' }), 'Mom');
+  assert.strictEqual(phone.caller({ title: 'Mom', body: 'Missed call' }), 'Mom');
+  assert.strictEqual(phone.caller({ title: 'Missed voice call', body: '' }), 'Unknown');
+
   let seen = null;
   const box = phone.inbox((v) => (seen = v));
   box.add({ name: 'Phone', phone: true, missed: true, title: 'Missed call', body: 'Mom', at: 1 });
@@ -76,6 +81,40 @@ test('shelf: keeps real files, newest first, no duplicates', () => {
     assert.deepStrictEqual(items.map((i) => i.name), ['essay.docx']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('screenshots: a new image on the clipboard peeks once; text and old images do not', async () => {
+  const { screenshotWatcher } = require('../src/screenshots');
+  // A stand-in for Electron's clipboard and NativeImage.
+  const image = (id, w = 1920, h = 1080) => ({
+    isEmpty: () => false,
+    getSize: () => ({ width: w, height: h }),
+    resize: () => image(id, 48, 27),
+    toBitmap: () => Buffer.from(`pixels-${id}`),
+    toDataURL: () => `data:image/png;base64,${id}`,
+    toJPEG: () => Buffer.from(`jpeg-${id}`),
+    toPNG: () => Buffer.from(`png-${id}`),
+  });
+  let current = image('old'); // already there when Apron starts
+  const clipboard = { availableFormats: () => (current ? ['image/png'] : ['text/plain']), readImage: () => current };
+  const shots = [];
+  const w = screenshotWatcher(clipboard, (s) => shots.push(s));
+  const tick = () => new Promise((r) => setTimeout(r, 1100));
+  try {
+    await tick();
+    assert.strictEqual(shots.length, 0, 'an image from before start is not new');
+    current = image('new');
+    await tick();
+    await tick();
+    assert.strictEqual(shots.length, 1, 'the new screenshot peeks exactly once');
+    assert.deepStrictEqual([shots[0].width, shots[0].height], [1920, 1080]);
+    assert.strictEqual(w.jpeg(), Buffer.from('jpeg-new').toString('base64'));
+    current = null; // copied some text
+    await tick();
+    assert.strictEqual(shots.length, 1);
+  } finally {
+    w.stop();
   }
 });
 

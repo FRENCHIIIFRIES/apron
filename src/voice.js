@@ -110,6 +110,8 @@ function create({ onState, onLevel = () => {}, onClip, logFile } = {}) {
     get status() {
       return status;
     },
+    /** Adds a line to the diagnostics log (outcomes only, never what was said). */
+    log,
     /** Ends the helper (Apron is quitting). */
     stop() {
       if (proc) {

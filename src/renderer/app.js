@@ -1534,7 +1534,7 @@ function renderPhone() {
           'div',
           { class: 'row' },
           h('span', { class: 'app-badge ringing-once' }, '☎'),
-          h('div', { class: 'main' }, h('div', { class: 'title' }, c.name), h('div', { class: 'sub' }, `${fmtAgo(c.at)} ago`)),
+          h('div', { class: 'main' }, h('div', { class: 'title' }, c.name), h('div', { class: 'sub' }, fmtAgo(c.at) === 'now' ? 'just now' : `${fmtAgo(c.at)} ago`)),
           h('button', { class: 'pill-btn', onclick: () => window.island.phone('callback', c.id) }, 'Call back'),
           h('button', { class: 'x', title: 'Dismiss', onclick: () => window.island.phone('dismiss', c.id) }, '×'),
         ),
@@ -1846,7 +1846,7 @@ function onEvent(e) {
         peek: true,
         tab: 'phone',
         lead: h('span', { class: 'app-badge' }, '☎'),
-        text: h('span', { class: 'two' }, h('b', {}, (e.title || 'Missed call').replace(/^missed (voice |video )?call( from)?:?\s*/i, '') || 'Missed call'), h('small', {}, 'Missed call · hover to call back')),
+        text: h('span', { class: 'two' }, h('b', {}, e.caller || 'Missed call'), h('small', {}, 'Missed call · hover to call back')),
         textKey: `missed:${e.at}`,
         trail: '',
       },
@@ -1943,6 +1943,8 @@ function onEvent(e) {
         6000,
       );
     }
+  } else if (e.type === 'charging') {
+    chargeFlash(e.level);
   } else if (e.type === 'classend') {
     const next = e.next ? `Next: ${e.next.title}${e.next.location ? ` · ${e.next.location}` : ''} at ${fmtTime(e.next.start)}` : 'Then a break';
     flash(
@@ -1981,25 +1983,30 @@ function batteryLead(level, charging) {
   return h('span', { class: `batt${charging ? ' charging' : ''}${level <= 0.15 && !charging ? ' low' : ''}` }, h('i', { style: `width:${Math.round(level * 100)}%` }));
 }
 
+/** Plugged in: a battery that fills up to the charge level. */
+function chargeFlash(level) {
+  const pct = Math.round(level * 100);
+  flash(
+    {
+      id: `charge:${Date.now()}`,
+      peek: true,
+      charge: true,
+      lead: h('span', { class: 'charge-batt' }, h('i', { style: `--to:${Math.max(6, pct)}%` })),
+      text: h('span', { class: 'two' }, h('b', {}, `${pct}%`), h('small', {}, 'Charging')),
+      textKey: `charge:${pct}`,
+      trail: h('span', { class: 'bolt' }, '⚡'),
+    },
+    3800,
+  );
+}
+
 if (navigator.getBattery) {
   navigator.getBattery().then((b) => {
     let warned = false;
     b.addEventListener('chargingchange', () => {
       const pct = Math.round(b.level * 100);
-      if (b.charging) {
-        flash(
-          {
-            id: `charge:${Date.now()}`,
-            peek: true,
-            charge: true,
-            lead: h('span', { class: 'charge-batt' }, h('i', { style: `--to:${Math.max(6, pct)}%` })),
-            text: h('span', { class: 'two' }, h('b', {}, `${pct}%`), h('small', {}, 'Charging')),
-            textKey: `charge:${pct}`,
-            trail: h('span', { class: 'bolt' }, '⚡'),
-          },
-          3800,
-        );
-      } else flash({ id: 'battery', lead: batteryLead(b.level, false), text: 'On battery', trail: `${pct}%` });
+      if (b.charging) chargeFlash(b.level);
+      else flash({ id: 'battery', lead: batteryLead(b.level, false), text: 'On battery', trail: `${pct}%` });
       if (b.charging) warned = false;
     });
     b.addEventListener('levelchange', () => {

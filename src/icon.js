@@ -173,7 +173,12 @@ function drawIcon(size) {
   const k = (s * (detailed ? 0.0082 : 0.0092));
   const ox = s / 2 - 50 * k;
   const oy = s / 2 - 51.5 * k;
-  const px = (shape) => (x, y) => shape((x - ox) / k, (y - oy) / k) * k;
+  // Outside the apron's box every apron shape is far away, so skip the maths there.
+  const px = (shape) => (x, y) => {
+    const u = (x - ox) / k;
+    const v = (y - oy) / k;
+    return u < 5 || u > 95 || v < 4 || v > 99 ? 60 * k : shape(u, v) * k;
+  };
   // Thin parts get a minimum pixel width so small icons stay crisp.
   const w = (units, minPx) => Math.max(units, minPx / k);
 

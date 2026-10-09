@@ -182,9 +182,20 @@ function createNotch(display) {
   win.once('ready-to-show', () => {
     place(win, display);
     win.showInactive();
-    // APRON_NOTCH_SHOT=<file.png> saves just this window's pixels (for docs/debugging).
+    // APRON_NOTCH_SHOT=<file.png> saves just this window's pixels (for docs/debugging);
+    // APRON_SHOT_DELAY can list several times ("4000,6000") for one image each.
     if (process.env.APRON_NOTCH_SHOT && query.primary === '1') {
-      setTimeout(async () => fs.writeFileSync(process.env.APRON_NOTCH_SHOT, (await win.webContents.capturePage()).toPNG()), Number(process.env.APRON_SHOT_DELAY) || 6000);
+      const delays = String(process.env.APRON_SHOT_DELAY || '6000').split(',').map(Number);
+      delays.forEach((ms, i) => {
+        const file = delays.length > 1 ? process.env.APRON_NOTCH_SHOT.replace(/\.png$/i, `-${i + 1}.png`) : process.env.APRON_NOTCH_SHOT;
+        setTimeout(async () => {
+          if (process.env.APRON_CONSOLE) {
+            const s = await win.webContents.executeJavaScript('JSON.stringify({ shot: Boolean(state.shot), flash: state.flash && state.flash.id, text: document.querySelector("#compact-text").textContent, cls: document.querySelector("#island").className })');
+            console.log(`[shot ${ms}ms] ${s}`);
+          }
+          fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
+        }, ms);
+      });
     }
   });
   notches.set(display.id, { win, rect: null, hovering: false });
@@ -464,14 +475,17 @@ function toggleVoice() {
 }
 
 async function onClip(clip) {
+  const started = Date.now();
   try {
     const r = await voiceCommand.interpret(geminiAi(), clip, {
       now: Date.now(),
       apps: (config.pinnedApps || []).map((a) => a.name),
       contacts: (config.speedDial || []).map((c) => c.name),
     });
+    sources.voice.log(`understood as ${r.action}${r.minutes ? ` ${r.minutes}` : ''} in ${Date.now() - started} ms`);
     await runVoice(r);
   } catch (err) {
+    sources.voice.log(`not understood after ${Date.now() - started} ms: ${err.message}`);
     emit({ type: 'info', text: err instanceof ai.AiError ? err.message : "Couldn't make that out. Try again", trail: '🎙' });
   } finally {
     sources.voice.done();
@@ -1421,7 +1435,7 @@ app.whenReady().then(() => {
     // Class mode: only calls and one-time codes get through.
     if (state.classMode && (config.classMode || {}).quiet !== false && !n.call && !n.code) return;
     if (n.code) update('code', { code: n.code, from: n.name, at: Date.now() });
-    emit({ type: 'notification', ...n });
+    emit({ type: 'notification', ...n, ...(n.missed ? { caller: phone.caller(n) } : {}) });
   });
 
   const userData = app.getPath('userData');
@@ -1476,7 +1490,30 @@ app.whenReady().then(() => {
   screen.on('display-metrics-changed', syncNotches);
   screen.on('display-added', syncNotches);
   screen.on('display-removed', syncNotches);
+  if (process.env.APRON_DEMO) setTimeout(() => runDemo(process.env.APRON_DEMO), Number(process.env.APRON_DEMO_DELAY) || 3000);
 });
+
+/**
+ * APRON_DEMO=shot|charge|missed|message|classend|mic|shelf plays that peek with made-up data a few
+ * seconds after start, so each one can be checked without a real call, screenshot or charger.
+ */
+function runDemo(kind) {
+  const now = Date.now();
+  if (kind === 'shot') {
+    update('shot', { thumb: nativeImage.createFromBuffer(appIconPng(32)).resize({ width: 200 }).toDataURL(), width: 1920, height: 1080, at: now });
+    emit({ type: 'shot' });
+  } else if (kind === 'charge') emit({ type: 'charging', level: 0.64 });
+  else if (kind === 'missed' || kind === 'message') {
+    const n =
+      kind === 'missed'
+        ? { name: 'Phone', phone: true, missed: true, title: 'Missed call', body: 'Mom', at: now }
+        : { name: 'WhatsApp', phone: true, pkg: 'com.whatsapp', title: 'Riya', body: 'did you finish the maths hw?', at: now };
+    stores.inbox.add(n);
+    emit({ type: 'notification', ...n, ...(n.missed ? { caller: phone.caller(n) } : {}) });
+  } else if (kind === 'classend') emit({ type: 'classend', title: 'P3 Maths', left: 5, next: { title: 'P4 Hindi', location: 'B204', start: now + 6 * 60e3 } });
+  else if (kind === 'mic') emit({ type: 'mic', muted: true });
+  else if (kind === 'shelf') stores.shelf.add(['README.md', 'assets/logo.png', 'assets/logo.svg'].map((f) => path.join(__dirname, '..', f)));
+}
 
 app.on('will-quit', () => globalShortcut.unregisterAll());
 app.on('before-quit', () => {

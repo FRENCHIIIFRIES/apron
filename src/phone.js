@@ -44,6 +44,12 @@ function replyTarget(msg, findApp = () => null) {
   return { url: 'ms-phone:' };
 }
 
+/** Who called: Phone Link puts the name in the title or the body, next to "Missed call". */
+function caller(n) {
+  const strip = (s) => String(s || '').replace(/missed (voice |video )?call( from)?:?/i, '').replace(/^[\s·:,-]+|[\s·:,-]+$/g, '');
+  return strip(n.title) || strip(n.body) || 'Unknown';
+}
+
 /** Keeps the latest phone messages and missed calls. onChange({ messages, calls }). */
 function inbox(onChange) {
   let messages = [];
@@ -55,7 +61,7 @@ function inbox(onChange) {
     add(n) {
       if (!n || n.code || n.call) return;
       if (n.missed) {
-        const who = String(n.title || '').replace(/^missed (voice |video )?call( from)?:?\s*/i, '').trim() || 'Unknown';
+        const who = caller(n);
         calls = [{ id: `${n.at}`, name: who.slice(0, 60), number: extractNumber(`${n.title} ${n.body}`), at: n.at }, ...calls].slice(0, MAX_CALLS);
       } else if (n.phone || /whatsapp|telegram/i.test(n.name || '')) {
         messages = [
@@ -100,4 +106,4 @@ async function connectWifi(name) {
   });
 }
 
-module.exports = { extractNumber, cleanNumber, replyTarget, inbox, parseProfiles, wifiProfiles, connectWifi };
+module.exports = { extractNumber, cleanNumber, replyTarget, caller, inbox, parseProfiles, wifiProfiles, connectWifi };

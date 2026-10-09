@@ -1090,3 +1090,11 @@ button {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- top bar: everything fits, Settings always visible ---------- */
+.tab-name { display: none; } /* the highlighted dock icon already says where you are */
+.dock { gap: 2px; flex: none; }
+.dock button { width: 28px; height: 28px; }
+.tabs .clock { margin-left: auto; }
+.gear { flex: none; margin-left: 8px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: var(--fg); font-size: 13px; box-shadow: inset 0 0 0 1px var(--faint); transition: transform 0.25s var(--spring-soft), box-shadow 0.15s; }
+.gear:hover { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); transform: rotate(60deg); }
